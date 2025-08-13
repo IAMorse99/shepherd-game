@@ -3,16 +3,10 @@
 
 // ---------- CONFIG ----------
 const TILE = 20;                 // px per tile
-const SIZE = 80;                 // 80x80 tiles
+const SIZE = 80;                 // grid (SIZE x SIZE)
 const GRID_COLOR = "rgba(0,0,0,0.18)";
 const STEP_MS = 90;              // ms per tile when holding a key
 
-// ring widths (in tiles) from outside → inside
-const R_PASTURE = 20;
-const R_WATER   = 7;
-const R_GLEN    = 14;
-
-// ring colors
 const COLORS = {
   pasture: "#7ccf4f",
   water:   "#4aa7c9",
@@ -20,25 +14,36 @@ const COLORS = {
   dark:    "#234020"
 };
 
-// ---------- SETUP CANVAS ----------
+// ---------- CANVAS ----------
 const canvas = document.getElementById("map");
-if (!canvas) {
-  throw new Error("Canvas #map not found. Make sure index.html has <canvas id=\"map\"></canvas> and main.js is loaded.");
-}
 const ctx = canvas.getContext("2d");
 canvas.width  = SIZE * TILE;
 canvas.height = SIZE * TILE;
 
-// center & ring math
 const cx = Math.floor(SIZE / 2);
 const cy = Math.floor(SIZE / 2);
-const maxR = Math.min(cx, cy) - 1;
+const maxR = Math.min(cx, cy) - 1;  // max ring radius in tiles
+
+// --- SAFE RING SIZING (auto-fits the board) ---
+let rPasture = Math.floor(maxR * 0.45);
+let rWater   = Math.floor(maxR * 0.17);
+let rGlen    = Math.floor(maxR * 0.25);
+let sum = rPasture + rWater + rGlen;
+let rDark    = Math.max(2, maxR - sum);   // leave at least 2 tiles radius
+
+// If still too large, trim pasture first, then glen, then water.
+while (rPasture + rWater + rGlen + rDark > maxR) {
+  if (rPasture > 6) rPasture--;
+  else if (rGlen > 4) rGlen--;
+  else if (rWater > 3) rWater--;
+  else { rDark = Math.max(2, rDark - 1); break; }
+}
 
 const edges = {
   pasture: maxR,
-  water:   maxR - R_PASTURE,
-  glen:    maxR - R_PASTURE - R_WATER,
-  dark:    maxR - R_PASTURE - R_WATER - R_GLEN
+  water:   maxR - rPasture,
+  glen:    maxR - rPasture - rWater,
+  dark:    maxR - rPasture - rWater - rGlen  // >= 2 by construction
 };
 
 function radial(x, y) {
@@ -53,7 +58,7 @@ function ringAt(x, y) {
   return "dark";
 }
 
-// ---------- PRE-RENDER MAP (offscreen) ----------
+// ---------- PRE-RENDER MAP ----------
 const mapLayer = document.createElement("canvas");
 mapLayer.width = canvas.width;
 mapLayer.height = canvas.height;
@@ -66,18 +71,20 @@ for (let y = 0; y < SIZE; y++) {
     mctx.fillStyle = COLORS[ring];
     mctx.fillRect(x * TILE, y * TILE, TILE, TILE);
 
-    // tiny deterministic noise for texture
-    const n = (Math.sin((x * 97 + y * 57)) + 1) * 0.08;
+    const n = (Math.sin((x * 97 + y * 57)) + 1) * 0.08; // tiny texture
     mctx.fillStyle = `rgba(0,0,0,${n})`;
     mctx.fillRect(x * TILE, y * TILE, TILE, TILE);
   }
 }
 
-// darker, less-welcoming center overlay
-mctx.fillStyle = "rgba(0,0,0,0.15)";
-mctx.beginPath();
-mctx.arc(cx * TILE, cy * TILE, (edges.dark + 1) * TILE, 0, Math.PI * 2);
-mctx.fill();
+// darker, less-welcoming center overlay (guard radius)
+const centerRadius = Math.max(0, (edges.dark + 1) * TILE);
+if (centerRadius > 0) {
+  mctx.fillStyle = "rgba(0,0,0,0.15)";
+  mctx.beginPath();
+  mctx.arc(cx * TILE, cy * TILE, centerRadius, 0, Math.PI * 2);
+  mctx.fill();
+}
 
 // grid overlay
 mctx.strokeStyle = GRID_COLOR;
@@ -98,7 +105,7 @@ for (let x = 0; x <= SIZE; x++) {
 // ---------- PLAYER ----------
 const player = {
   x: cx,
-  y: edges.pasture - 2,   // start near outer ring
+  y: Math.min(SIZE - 2, edges.pasture - 2),
   moveCooldown: 0
 };
 
@@ -111,24 +118,18 @@ const keymap = {
 };
 
 addEventListener("keydown", (e) => {
-  const k = keymap[e.code];
-  if (!k) return;
-  held[k] = true;
-  e.preventDefault();
+  const k = keymap[e.code]; if (!k) return;
+  held[k] = true; e.preventDefault();
 });
 addEventListener("keyup", (e) => {
-  const k = keymap[e.code];
-  if (!k) return;
-  held[k] = false;
-  e.preventDefault();
+  const k = keymap[e.code]; if (!k) return;
+  held[k] = false; e.preventDefault();
 });
 
 function canWalk(nx, ny) {
   if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) return false;
-  // limit to inside the pasture edge (feels like a circle map)
   return radial(nx, ny) <= edges.pasture + 0.2;
 }
-
 function tryMove() {
   const dir =
     held.up ? [0, -1] :
@@ -137,33 +138,23 @@ function tryMove() {
     held.right ? [1, 0] :
     null;
   if (!dir) return false;
-  const nx = player.x + dir[0];
-  const ny = player.y + dir[1];
-  if (canWalk(nx, ny)) {
-    player.x = nx; player.y = ny;
-    return true;
-  }
+  const nx = player.x + dir[0], ny = player.y + dir[1];
+  if (canWalk(nx, ny)) { player.x = nx; player.y = ny; return true; }
   return false;
 }
 
-// ---------- MAIN LOOP ----------
+// ---------- LOOP ----------
 let last = performance.now();
 function loop(now) {
   const dt = now - last; last = now;
 
-  // movement cadence
   player.moveCooldown -= dt;
   if (player.moveCooldown <= 0) {
-    if (tryMove()) {
-      player.moveCooldown = STEP_MS;
-    } else if (!held.up && !held.down && !held.left && !held.right) {
-      player.moveCooldown = 0;
-    } else {
-      player.moveCooldown = STEP_MS;
-    }
+    if (tryMove()) player.moveCooldown = STEP_MS;
+    else if (!held.up && !held.down && !held.left && !held.right) player.moveCooldown = 0;
+    else player.moveCooldown = STEP_MS;
   }
 
-  // draw
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(mapLayer, 0, 0);
 
@@ -181,8 +172,3 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-
-// Helpful error logging if something still breaks
-window.addEventListener("error", (e) => {
-  console.error("JS Error:", e.message, e.filename, e.lineno);
-});
