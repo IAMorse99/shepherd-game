@@ -156,7 +156,7 @@ function drawMinimap(cam) {
   ctx.strokeRect(bx, by, bw, bh);
 }
 
-/* ===== ANIM FX (draw only visible tiles) ===== */
+/* ===== ANIM FX (visible tiles only) ===== */
 function visibleTileBounds(cam) {
   const x0 = Math.max(0, Math.floor(cam.x / TILE));
   const y0 = Math.max(0, Math.floor(cam.y / TILE));
@@ -164,14 +164,13 @@ function visibleTileBounds(cam) {
   const y1 = Math.min(WORLD-1, Math.ceil((cam.y + cam.h) / TILE));
   return { x0, y0, x1, y1 };
 }
-function hash2(x,y){ // small deterministic pseudo-random
+function hash2(x,y){
   let h = x*374761393 + y*668265263; h = (h ^ (h>>>13)) >>> 0;
-  return (h % 1000) / 1000; // [0,1)
+  return (h % 1000) / 1000;
 }
-
 function drawAnimatedFX(cam, t) {
   const { x0, y0, x1, y1 } = visibleTileBounds(cam);
-  // WATER shimmer & flow
+  // WATER shimmer
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "water") continue;
@@ -179,11 +178,11 @@ function drawAnimatedFX(cam, t) {
       const phase = (x*0.6 + y*0.3) + t*0.002;
       const a = 0.08 + 0.06*Math.sin(phase*6.28);
       ctx.fillStyle = `rgba(255,255,255,${a})`;
-      ctx.fillRect(sx, sy, TILE, TILE*0.15);             // small highlight strip
-      ctx.fillRect(sx, sy + TILE*0.55, TILE, TILE*0.1);  // second strip
+      ctx.fillRect(sx, sy, TILE, TILE*0.15);
+      ctx.fillRect(sx, sy + TILE*0.55, TILE, TILE*0.1);
     }
   }
-  // GLEN: moving dappled light (wind through leaves)
+  // GLEN dappled light
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "glen") continue;
@@ -194,12 +193,12 @@ function drawAnimatedFX(cam, t) {
       ctx.fillRect(sx, sy, TILE, TILE);
     }
   }
-  // DARK FOREST: rare fireflies twinkling
+  // DARK FOREST fireflies
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "dark") continue;
       const r = hash2(x,y);
-      if (r < 0.02) { // ~2% of tiles show a firefly
+      if (r < 0.02) {
         const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
         const j = (t*0.002 + r*10);
         const fx = sx + (TILE/2 + Math.sin(j)*TILE*0.25);
@@ -212,20 +211,36 @@ function drawAnimatedFX(cam, t) {
   }
 }
 
-/* ===== CLOUD LAYER (screen-space) ===== */
-const clouds = Array.from({length: 6}).map((_,i)=>({
+/* ===== CLOUDS (image-based) ===== */
+// Put images at: client/public/cloud1.png, cloud2.png, cloud3.png
+const cloudSrcs = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
+const cloudImages = cloudSrcs.map(src => { const i = new Image(); i.src = src; return i; });
+
+const clouds = Array.from({length: 6}).map(() => ({
+  img: cloudImages[Math.floor(Math.random() * cloudImages.length)],
   x: Math.random()*2000 - 400,
   y: Math.random()*1200 - 200,
-  r: 120 + Math.random()*160,
-  s: 0.08 + Math.random()*0.06 // speed
+  scale: 0.5 + Math.random()*0.6,
+  speed: 0.06 + Math.random()*0.06,
+  alpha: 0.12 + Math.random()*0.06
 }));
-function drawClouds(t){
+
+function drawClouds(){
   ctx.save();
-  ctx.globalAlpha = 0.12;
-  ctx.fillStyle = "#102018";
-  clouds.forEach(c=>{
-    c.x += c.s; if (c.x - c.r > canvas.width + 100) { c.x = -c.r - 100; c.y = Math.random()*canvas.height; }
-    ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI*2); ctx.fill();
+  clouds.forEach(c => {
+    const w = (c.img.naturalWidth  || 512) * c.scale;
+    const h = (c.img.naturalHeight || 512) * c.scale;
+    ctx.globalAlpha = c.alpha;
+    ctx.drawImage(c.img, c.x, c.y, w, h);
+    c.x += c.speed;
+    if (c.x > canvas.width + 200) {
+      c.x = -w - 100;
+      c.y = Math.random()*canvas.height - 100;
+      c.img = cloudImages[Math.floor(Math.random() * cloudImages.length)];
+      c.scale = 0.5 + Math.random()*0.6;
+      c.alpha = 0.12 + Math.random()*0.06;
+      c.speed = 0.06 + Math.random()*0.06;
+    }
   });
   ctx.restore();
 }
@@ -248,7 +263,7 @@ function loop(now){
   // main view
   ctx.drawImage(mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
 
-  // animated elements (only for visible tiles)
+  // animated elements (visible tiles)
   drawAnimatedFX(cam, now);
 
   // player marker
@@ -258,8 +273,8 @@ function loop(now){
   ctx.fillStyle = "#fdfdfd"; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "#1c1c1c"; ctx.stroke();
 
-  // clouds overlay
-  drawClouds(now);
+  // cloud images overlay (screen-space)
+  drawClouds();
 
   // minimap
   drawMinimap(cam);
