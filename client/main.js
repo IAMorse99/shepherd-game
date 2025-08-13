@@ -221,7 +221,7 @@ function drawAnimatedFX(cam, t) {
    Place PNGs at: client/public/cloud1.png, cloud2.png, cloud3.png
    Use relative paths (no leading slash) since index.html lives in client/
 */
-const cloudSrcs = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
+const cloudSrcs = ["cloud1.png", "cloud2.png", "cloud3.png"];
 const cloudImages = cloudSrcs.map(src => { const i = new Image(); i.src = src; return i; });
 
 const clouds = Array.from({length: 6}).map(() => ({
