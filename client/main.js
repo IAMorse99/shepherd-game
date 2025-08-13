@@ -3,10 +3,10 @@
 
 /* ===== CONFIG ===== */
 const TILE = 20;                 // px per tile
-const WORLD = 200;               // 200x200 tiles (way bigger)
+const WORLD = 200;               // world tiles (big!)
 const GRID_COLOR = "rgba(0,0,0,0.18)";
 const STEP_MS = 90;              // ms per tile when holding a key
-const MINIMAP_SIZE = 220;        // px square
+const MINIMAP_SIZE = 220;        // px
 const MINIMAP_PAD = 12;
 
 const COLORS = {
@@ -22,10 +22,10 @@ const ctx = canvas.getContext("2d", { alpha: false });
 ctx.imageSmoothingEnabled = false;
 
 function resize() {
-  canvas.width  = Math.min(window.innerWidth, 1600); // cap if you want
+  canvas.width  = Math.min(window.innerWidth, 1600);
   canvas.height = Math.min(window.innerHeight, 1000);
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
 /* ===== WORLD & RINGS ===== */
@@ -33,7 +33,7 @@ const cx = Math.floor(WORLD/2);
 const cy = Math.floor(WORLD/2);
 const maxR = Math.min(cx, cy) - 1;
 
-// auto-fit ring widths (percentages of radius)
+// auto-fit ring widths
 let rPasture = Math.floor(maxR * 0.45);
 let rWater   = Math.floor(maxR * 0.17);
 let rGlen    = Math.floor(maxR * 0.25);
@@ -60,7 +60,7 @@ function ringAt(x, y) {
   return "dark";
 }
 
-/* ===== PRE-RENDER MAP to offscreen ===== */
+/* ===== PRE-RENDER MAP (STATIC) ===== */
 const worldPx = WORLD * TILE;
 const mapLayer = document.createElement("canvas");
 mapLayer.width = worldPx; mapLayer.height = worldPx;
@@ -110,7 +110,7 @@ addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; hel
 
 function canWalk(nx, ny) {
   if (nx<0||ny<0||nx>=WORLD||ny>=WORLD) return false;
-  return radial(nx, ny) <= edges.pasture + 0.2; // inside outer edge
+  return radial(nx, ny) <= edges.pasture + 0.2;
 }
 function tryMove() {
   const dir = held.up?[0,-1] : held.down?[0,1] : held.left?[-1,0] : held.right?[1,0] : null;
@@ -120,7 +120,7 @@ function tryMove() {
   return false;
 }
 
-/* ===== CAMERA (close view) ===== */
+/* ===== CAMERA ===== */
 function cameraRect() {
   const vw = canvas.width, vh = canvas.height;
   let camX = player.x*TILE + TILE/2 - vw/2;
@@ -136,21 +136,17 @@ function drawMinimap(cam) {
   const mmX = canvas.width - mmW - MINIMAP_PAD;
   const mmY = canvas.height - mmH - MINIMAP_PAD;
 
-  // background
   ctx.fillStyle = "rgba(0,0,0,0.4)";
   ctx.fillRect(mmX-6, mmY-6, mmW+12, mmH+12);
 
-  // scaled world
   ctx.drawImage(mapLayer, 0, 0, worldPx, worldPx, mmX, mmY, mmW, mmH);
 
-  // player dot
   const px = mmX + (player.x*TILE + TILE/2) / worldPx * mmW;
   const py = mmY + (player.y*TILE + TILE/2) / worldPx * mmH;
   ctx.fillStyle = "#ffffff";
   ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI*2); ctx.fill();
   ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.stroke();
 
-  // camera box
   const bx = mmX + cam.x / worldPx * mmW;
   const by = mmY + cam.y / worldPx * mmH;
   const bw = cam.w / worldPx * mmW;
@@ -160,11 +156,86 @@ function drawMinimap(cam) {
   ctx.strokeRect(bx, by, bw, bh);
 }
 
+/* ===== ANIM FX (draw only visible tiles) ===== */
+function visibleTileBounds(cam) {
+  const x0 = Math.max(0, Math.floor(cam.x / TILE));
+  const y0 = Math.max(0, Math.floor(cam.y / TILE));
+  const x1 = Math.min(WORLD-1, Math.ceil((cam.x + cam.w) / TILE));
+  const y1 = Math.min(WORLD-1, Math.ceil((cam.y + cam.h) / TILE));
+  return { x0, y0, x1, y1 };
+}
+function hash2(x,y){ // small deterministic pseudo-random
+  let h = x*374761393 + y*668265263; h = (h ^ (h>>>13)) >>> 0;
+  return (h % 1000) / 1000; // [0,1)
+}
+
+function drawAnimatedFX(cam, t) {
+  const { x0, y0, x1, y1 } = visibleTileBounds(cam);
+  // WATER shimmer & flow
+  for (let y=y0; y<=y1; y++){
+    for (let x=x0; x<=x1; x++){
+      if (ringAt(x,y) !== "water") continue;
+      const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
+      const phase = (x*0.6 + y*0.3) + t*0.002;
+      const a = 0.08 + 0.06*Math.sin(phase*6.28);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.fillRect(sx, sy, TILE, TILE*0.15);             // small highlight strip
+      ctx.fillRect(sx, sy + TILE*0.55, TILE, TILE*0.1);  // second strip
+    }
+  }
+  // GLEN: moving dappled light (wind through leaves)
+  for (let y=y0; y<=y1; y++){
+    for (let x=x0; x<=x1; x++){
+      if (ringAt(x,y) !== "glen") continue;
+      const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
+      const p = (Math.sin((x*0.7 + t*0.0015)) + Math.cos((y*0.9 - t*0.0012)))*0.5;
+      const a = 0.05 + 0.05*Math.max(0, p);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.fillRect(sx, sy, TILE, TILE);
+    }
+  }
+  // DARK FOREST: rare fireflies twinkling
+  for (let y=y0; y<=y1; y++){
+    for (let x=x0; x<=x1; x++){
+      if (ringAt(x,y) !== "dark") continue;
+      const r = hash2(x,y);
+      if (r < 0.02) { // ~2% of tiles show a firefly
+        const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
+        const j = (t*0.002 + r*10);
+        const fx = sx + (TILE/2 + Math.sin(j)*TILE*0.25);
+        const fy = sy + (TILE/2 + Math.cos(j*1.3)*TILE*0.2);
+        const glow = 0.35 + 0.35*Math.sin(j*3.0);
+        ctx.fillStyle = `rgba(255,245,160,${glow})`;
+        ctx.beginPath(); ctx.arc(fx, fy, 2.2, 0, Math.PI*2); ctx.fill();
+      }
+    }
+  }
+}
+
+/* ===== CLOUD LAYER (screen-space) ===== */
+const clouds = Array.from({length: 6}).map((_,i)=>({
+  x: Math.random()*2000 - 400,
+  y: Math.random()*1200 - 200,
+  r: 120 + Math.random()*160,
+  s: 0.08 + Math.random()*0.06 // speed
+}));
+function drawClouds(t){
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = "#102018";
+  clouds.forEach(c=>{
+    c.x += c.s; if (c.x - c.r > canvas.width + 100) { c.x = -c.r - 100; c.y = Math.random()*canvas.height; }
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.restore();
+}
+
 /* ===== LOOP ===== */
 let last = performance.now();
 function loop(now){
   const dt = now - last; last = now;
 
+  // movement cadence
   player.moveCooldown -= dt;
   if (player.moveCooldown <= 0) {
     if (tryMove()) player.moveCooldown = STEP_MS;
@@ -174,16 +245,21 @@ function loop(now){
 
   const cam = cameraRect();
 
-  // main view: draw the source rect of the big map to the canvas
+  // main view
   ctx.drawImage(mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
 
-  // player marker in view space
+  // animated elements (only for visible tiles)
+  drawAnimatedFX(cam, now);
+
+  // player marker
   const sx = player.x*TILE - cam.x + TILE/2;
   const sy = player.y*TILE - cam.y + TILE/2;
-  ctx.beginPath();
-  ctx.arc(sx, sy, Math.max(6, TILE*0.35), 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(sx, sy, Math.max(6, TILE*0.35), 0, Math.PI*2);
   ctx.fillStyle = "#fdfdfd"; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "#1c1c1c"; ctx.stroke();
+
+  // clouds overlay
+  drawClouds(now);
 
   // minimap
   drawMinimap(cam);
