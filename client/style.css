@@ -1,0 +1,10 @@
+html, body {
+  margin: 0; height: 100%; background:#101810; /* dark frame helps the colors pop */
+}
+#map {
+  display:block;
+  margin:auto;
+  image-rendering: pixelated;           /* crisp grid */
+  max-width: 100vw;
+  max-height: 100vh;
+}
