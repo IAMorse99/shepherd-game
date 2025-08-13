@@ -39,8 +39,12 @@ let rWater   = Math.floor(maxR * 0.17);
 let rGlen    = Math.floor(maxR * 0.25);
 let rDark    = Math.max(2, maxR - (rPasture + rWater + rGlen));
 while (rPasture + rWater + rGlen + rDark > maxR) {
-  if (rPasture > 8) rPasture--; else if (rGlen > 6) rGlen--; else if (rWater > 4) rWater--; else { rDark = Math.max(2, rDark-1); break; }
+  if (rPasture > 8) rPasture--;
+  else if (rGlen > 6) rGlen--;
+  else if (rWater > 4) rWater--;
+  else { rDark = Math.max(2, rDark-1); break; }
 }
+
 const edges = {
   pasture: maxR,
   water:   maxR - rPasture,
@@ -90,10 +94,12 @@ if (centerRadius > 0) {
 // grid overlay
 mctx.strokeStyle = GRID_COLOR; mctx.lineWidth = 1;
 for (let y = 0; y <= WORLD; y++) {
-  mctx.beginPath(); mctx.moveTo(0, y*TILE + 0.5); mctx.lineTo(worldPx, y*TILE + 0.5); mctx.stroke();
+  mctx.beginPath(); mctx.moveTo(0, y*TILE + 0.5);
+  mctx.lineTo(worldPx, y*TILE + 0.5); mctx.stroke();
 }
 for (let x = 0; x <= WORLD; x++) {
-  mctx.beginPath(); mctx.moveTo(x*TILE + 0.5, 0); mctx.lineTo(x*TILE + 0.5, worldPx); mctx.stroke();
+  mctx.beginPath(); mctx.moveTo(x*TILE + 0.5, 0);
+  mctx.lineTo(x*TILE + 0.5, worldPx); mctx.stroke();
 }
 
 /* ===== PLAYER ===== */
@@ -211,8 +217,10 @@ function drawAnimatedFX(cam, t) {
   }
 }
 
-/* ===== CLOUDS (image-based) ===== */
-// Put images at: client/public/cloud1.png, cloud2.png, cloud3.png
+/* ===== CLOUDS (image-based) =====
+   Place PNGs at: client/public/cloud1.png, cloud2.png, cloud3.png
+   Use relative paths (no leading slash) since index.html lives in client/
+*/
 const cloudSrcs = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
 const cloudImages = cloudSrcs.map(src => { const i = new Image(); i.src = src; return i; });
 
@@ -228,12 +236,14 @@ const clouds = Array.from({length: 6}).map(() => ({
 function drawClouds(){
   ctx.save();
   clouds.forEach(c => {
-    const w = (c.img.naturalWidth  || 512) * c.scale;
-    const h = (c.img.naturalHeight || 512) * c.scale;
-    ctx.globalAlpha = c.alpha;
-    ctx.drawImage(c.img, c.x, c.y, w, h);
+    const w = (c.img.naturalWidth  || 0) * c.scale;
+    const h = (c.img.naturalHeight || 0) * c.scale;
+    if (w > 0 && h > 0) {
+      ctx.globalAlpha = c.alpha;
+      ctx.drawImage(c.img, c.x, c.y, w, h);
+    }
     c.x += c.speed;
-    if (c.x > canvas.width + 200) {
+    if (w > 0 && c.x > canvas.width + 200) {
       c.x = -w - 100;
       c.y = Math.random()*canvas.height - 100;
       c.img = cloudImages[Math.floor(Math.random() * cloudImages.length)];
