@@ -217,35 +217,27 @@ function drawAnimatedFX(cam, t) {
   }
 }
 
-/* ===== CLOUDS (image-based, robust paths) =====
-   Your files are under: client/public/cloud1.png, cloud2.png, cloud3.png
-   This loader tries several URL candidates and logs which one worked.
-*/
+/* ===== CLOUDS (image-based, auto-path + badge) ===== */
 const CLOUDS_ON = true;
-const CLOUD_FILES = ["cloud1.png", "cloud2.png", "cloud3.png"];
+const N_CLOUDS = 6;
+const FILES = ["cloud1.png","cloud2.png","cloud3.png"];
 
-// Try multiple locations: root, /public, /client/public, relative
-function candidates(name){
-  return [
-    `/${name}`,
-    `/public/${name}`,
-    `/client/public/${name}`,
-    `${name}`,
-    `public/${name}`,
-    `client/public/${name}`,
-  ];
-}
+// Try all likely URL patterns so it works regardless of deployment root.
+const pathCandidates = (name) => ([
+  `/client/public/${name}`, // repo root deploy
+  `/public/${name}`,        // client/ deploy
+  `client/public/${name}`,  // relative (dev servers)
+  `public/${name}`,
+  `/${name}`,               // Next-style public (not typical here, but harmless to test)
+  `${name}`
+]);
 
 function loadFirst(name){
   return new Promise((resolve) => {
-    const opts = candidates(name);
+    const opts = pathCandidates(name);
     let i = 0;
     const tryNext = () => {
-      if (i >= opts.length) {
-        console.warn(`Cloud image not found for any path: ${name}`);
-        resolve(null);
-        return;
-      }
+      if (i >= opts.length) return resolve(null);
       const src = opts[i++];
       const img = new Image();
       img.onload  = () => { console.log("✅ cloud loaded:", src); resolve(img); };
@@ -261,16 +253,14 @@ let clouds = [];
 let cloudsReady = false;
 
 async function initClouds(){
-  const loaded = await Promise.all(CLOUD_FILES.map(loadFirst));
+  const loaded = await Promise.all(FILES.map(loadFirst));
   cloudImgs = loaded.filter(Boolean);
-  if (!cloudImgs.length){
-    console.warn("No clouds loaded — check file paths / commit images.");
-    return;
-  }
+  cloudsReady = cloudImgs.length > 0;
 
-  // Spawn visible on-screen so you can see them immediately
-  const N = 6;
-  clouds = Array.from({length:N}).map(() => {
+  if (!cloudsReady) return;
+
+  // Spawn on-screen so you see them immediately
+  clouds = Array.from({length: N_CLOUDS}).map(() => {
     const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
     const scale = 0.7 + Math.random()*0.7;
     const w = img.naturalWidth  * scale;
@@ -281,23 +271,34 @@ async function initClouds(){
       y: Math.random() * Math.max(0, canvas.height - h),
       scale,
       speed: 0.05 + Math.random()*0.06,
-      alpha: 0.20 + Math.random()*0.08
+      alpha: 0.22 + Math.random()*0.08
     };
   });
-  cloudsReady = true;
 }
 initClouds();
 
 function drawClouds(){
-  if (!CLOUDS_ON || !cloudsReady) return;
+  if (!CLOUDS_ON) return;
+
+  if (!cloudsReady) {
+    // Visible badge so you know why you don't see clouds
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(8, 8, 130, 22);
+    ctx.fillStyle = "#fff";
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillText("Clouds: not loaded", 14, 23);
+    ctx.restore();
+    return;
+  }
+
   ctx.save();
   clouds.forEach(c => {
     const w = c.img.naturalWidth  * c.scale;
     const h = c.img.naturalHeight * c.scale;
-
     ctx.globalAlpha = c.alpha;
     ctx.drawImage(c.img, c.x, c.y, w, h);
-
     c.x += c.speed;
     if (c.x > canvas.width + 120){
       const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
@@ -311,6 +312,16 @@ function drawClouds(){
       c.y = Math.random() * Math.max(0, canvas.height - nh);
     }
   });
+  ctx.restore();
+
+  // Small “loaded” badge
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(8, 8, 90, 22);
+  ctx.fillStyle = "#fff";
+  ctx.font = "12px system-ui, sans-serif";
+  ctx.fillText("Clouds: OK", 14, 23);
   ctx.restore();
 }
 
