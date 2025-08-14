@@ -5,8 +5,8 @@ import {
   drawVisibleFX,
   drawMinimap,
   drawBridges,
-  createFoodPatches,   // from map.js
-  drawFoodPatches,     // from map.js
+  createFoodPatches,
+  drawFoodPatches,
 } from "./map.js";
 import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
@@ -18,9 +18,9 @@ const WORLD = 200;
 const STEP_MS = 90;
 const MINIMAP = { size: 220, pad: 12 };
 
-// Food patches config
-const FOOD_PATCH_COUNT = 140;        // how many patches exist at once
-const FOOD_RESPAWN_EVERY_MS = 1500;  // try to respawn a patch periodically
+// Food patches
+const FOOD_PATCH_COUNT = 140;
+const FOOD_RESPAWN_EVERY_MS = 1500;
 
 /* ===== CANVAS ===== */
 const canvas = document.getElementById("map");
@@ -33,11 +33,10 @@ addEventListener("resize", resize); resize();
 const world = buildMap({ TILE, WORLD });
 
 /* ===== BRIDGES ===== */
-const bridgeTiles = buildBridges(world);      // array of {x,y}
-const bridgeSet   = toBridgeSet(bridgeTiles); // Set("x,y")
+const bridgeTiles = buildBridges(world);
+const bridgeSet   = toBridgeSet(bridgeTiles);
 
 /* ===== FOOD PATCHES ===== */
-// 🔧 FIX: pass { WORLD, ringAt } instead of the whole world object
 let foodPatches = createFoodPatches({ WORLD, ringAt: world.ringAt }, FOOD_PATCH_COUNT); // Set("x,y")
 let foodRespawnTimer = 0;
 const tileKey = (x,y) => `${x},${y}`;
@@ -63,11 +62,31 @@ function cameraRect(){
   return { x: camX, y: camY, w: vw, h: vh };
 }
 
-/* ===== HUD (sheep + patch count) ===== */
+/* ===== FOOD SEEK HELPER (for sheep) =====
+   Returns nearest patch tile {tx,ty,distTiles} within maxTiles, or null.
+   Simple O(N) scan over ~140 patches — fine for now. */
+function nearestPatchInTiles(xPx, yPx, maxTiles){
+  const tx0 = Math.floor(xPx / TILE);
+  const ty0 = Math.floor(yPx / TILE);
+  let best = null;
+  for (const key of foodPatches) {
+    const [xs, ys] = key.split(",");
+    const tx = +xs, ty = +ys;
+    const dx = tx - tx0, dy = ty - ty0;
+    const d2 = dx*dx + dy*dy;
+    if (d2 <= maxTiles*maxTiles) {
+      if (!best || d2 < best.d2) best = { tx, ty, d2 };
+    }
+  }
+  if (!best) return null;
+  return { tx: best.tx, ty: best.ty, distTiles: Math.sqrt(best.d2) };
+}
+
+/* ===== HUD ===== */
 function drawHUD(){
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(10, 10, 160, 52);
+  ctx.fillRect(10, 10, 180, 52);
   ctx.fillStyle = "#fff";
   ctx.font = "14px system-ui, sans-serif";
   ctx.fillText(`Sheep: ${sheepMgr.count}`, 18, 32);
@@ -98,17 +117,23 @@ function loop(now){
   const moving = movedThisTick || (player.x !== prevPX || player.y !== prevPY);
   prevPX = player.x; prevPY = player.y;
 
-  // update sheep (follow/mosey/breed)
-  sheepMgr.update(now, dt, { player, moving });
+  // update sheep (pass food seeker so idle sheep can drift toward patches)
+  sheepMgr.update(now, dt, {
+    player,
+    moving,
+    seekFood: (x,y,maxTiles) => nearestPatchInTiles(x,y,maxTiles)
+  });
 
-  // SHEEP GRAZING: any sheep standing on a food patch eats it
-  for (const s of sheepMgr.list) {
+  // GRAZING: check hungry-first so the front sheep can’t steal all the food
+  const hungryFirst = [...sheepMgr.list].sort((a,b)=>a.full - b.full);
+  for (const s of hungryFirst) {
+    if (s.full >= sheepMgr.mealsToBreed) continue; // already full; skip
     const tx = Math.floor(s.x / TILE);
     const ty = Math.floor(s.y / TILE);
     const key = tileKey(tx, ty);
     if (foodPatches.has(key)) {
       foodPatches.delete(key);
-      if (typeof sheepMgr.eat === "function") sheepMgr.eat(s, 1); // +1 meal to that sheep
+      sheepMgr.eat(s, 1); // +1 meal
     }
   }
 
@@ -117,7 +142,6 @@ function loop(now){
   if (foodRespawnTimer >= FOOD_RESPAWN_EVERY_MS) {
     foodRespawnTimer = 0;
     if (foodPatches.size < FOOD_PATCH_COUNT) {
-      // 🔧 FIX: also pass { WORLD, ringAt } here
       const one = createFoodPatches({ WORLD, ringAt: world.ringAt }, 1);
       for (const k of one) foodPatches.add(k);
     }
@@ -130,10 +154,8 @@ function loop(now){
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
   drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
 
-  // bridges (under entities)
+  // bridges + patches (under entities)
   drawBridges(ctx, cam, TILE, bridgeTiles);
-
-  // food patches (under entities)
   drawFoodPatches(ctx, cam, TILE, foodPatches);
 
   // entities
