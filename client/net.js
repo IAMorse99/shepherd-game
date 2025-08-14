@@ -1,80 +1,44 @@
 // client/net.js
 "use strict";
-// Lightweight client-only realtime via Supabase Presence
-// No server needed.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-export function createNet({ url, anonKey, room = "shepherd-room-1" }) {
-  const sb = createClient(url, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-
-  let channel = null;
+export function createNetWS({ url }) {
+  let ws = null;
+  let onSnapshot = () => {};
   let myId = null;
-  const others = new Map(); // id -> { id, name, x, y, ts }
 
-  // callbacks
-  let onUpsert = () => {};
-  let onRemove = () => {};
+  function connect(name){
+    ws = new WebSocket(url.replace(/^http/, "ws")); // support http(s) -> ws(s)
+    ws.onopen = () => {
+      if (name) send({ type:"join", name });
+    };
+    ws.onmessage = (ev) => {
+      let msg = null;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (!msg) return;
 
-  function connect(name = "Shep") {
-    channel = sb.channel(room, {
-      config: { presence: { key: Math.random().toString(36).slice(2, 10) } }
-    });
-
-    channel.on("presence", { event: "sync" }, () => {
-      // Presence state is a map: presenceKey -> metas[]
-      const state = channel.presenceState();
-      const seen = new Set();
-
-      for (const key in state) {
-        const metas = state[key];
-        metas.forEach((m) => {
-          const id = m.presence_ref;            // unique per connection
-          if (!myId && m.name && m.self) myId = id;
-
-          const p = {
-            id,
-            name: m.name || "anon",
-            x: m.x|0 || 0,
-            y: m.y|0 || 0,
-            ts: performance.now()
-          };
-          others.set(id, p);
-          seen.add(id);
-          onUpsert(p);
-        });
+      if (msg.type === "hello") {
+        myId = msg.id;
+      } else if (msg.type === "snapshot") {
+        onSnapshot(msg);
       }
-      // remove stale ones
-      for (const [id] of others) {
-        if (!seen.has(id)) {
-          others.delete(id);
-          onRemove(id);
-        }
-      }
-    });
-
-    // join + seed initial presence
-    channel.subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        await channel.track({ name, x: 0, y: 0, self: true });
-      }
-    });
+    };
+    ws.onclose = () => { /* optionally reconnect */ };
   }
 
-  function setState(x, y) {
-    if (!channel) return;
-    // Update presence payload (throttled by caller)
-    channel.track({ x: x|0, y: y|0, name: "Shep" });
+  function send(obj){
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    }
+  }
+
+  function sendInput(held){
+    send({ type:"input", held });
   }
 
   return {
     connect,
-    setState,
-    others,      // Map you can read in your render loop if you want
-    onUpsert(fn){ onUpsert = fn || (()=>{}); },
-    onRemove(fn){ onRemove = fn || (()=>{}); },
-    get id(){ return myId; }
+    sendInput,
+    onSnapshot: (cb) => { onSnapshot = cb; },
+    get myId(){ return myId; }
   };
 }
