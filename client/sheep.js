@@ -12,7 +12,7 @@ export function createSheepManager(env) {
   const DESIRED = TILE * 0.9;           // preferred spacing to leader
   const MAX_SPEED = TILE * 10;           // px/sec (follow speed)
   const IDLE_SPEED = TILE * 1.5;        // px/sec (mosey speed)
-  const IDLE_RADIUS = TILE * 0.6;       // how far they wander when idle
+  const IDLE_RADIUS = TILE * 5;       // how far they wander when idle
   const SEPARATION = TILE * 0.6;        // minimal distance between sheep
 
   function clampToPasture(x, y) {
