@@ -159,9 +159,9 @@ function canWalk(nx,ny){
 }
 
 /* ===== Wolves tuning (NEW) ===== */
-const WOLF_MAX = 3;                // soft cap (was 6)
-const WOLF_SPAWN_CHANCE = 0.004;   // ~0.4% per tick (was 2%) ⇒ ~1 every ~25s on average
-const WOLF_LIFE_MS = 15000;        // wolves despawn after 15 seconds if still around
+const WOLF_MAX = 5;                // soft cap (was 6)
+const WOLF_SPAWN_CHANCE = 0.05;   // ~0.4% per tick (was 2%) ⇒ ~1 every ~25s on average
+const WOLF_LIFE_MS = 30000;        // wolves despawn after 15 seconds if still around
 
 /* Wolves: spawn in glen/dark and roam; if nearby any sheep, chase */
 function spawnWolf(){
