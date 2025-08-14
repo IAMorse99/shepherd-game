@@ -217,20 +217,42 @@ function drawAnimatedFX(cam, t) {
   }
 }
 
-/* ===== CLOUDS (image-based) =====
-   PNGs live at: client/public/cloud1.png, cloud2.png, cloud3.png
-   We preload them, then spawn a few on-screen.
+/* ===== CLOUDS (image-based, robust paths) =====
+   Your files are under: client/public/cloud1.png, cloud2.png, cloud3.png
+   This loader tries several URL candidates and logs which one worked.
 */
 const CLOUDS_ON = true;
-// was: ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"]
-const CLOUD_SRCS = ["cloud1.png", "cloud2.png", "cloud3.png"];
+const CLOUD_FILES = ["cloud1.png", "cloud2.png", "cloud3.png"];
 
-function loadImg(src){
-  return new Promise(res => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = () => { console.warn("Cloud image failed:", src); res(null); };
-    i.src = src;
+// Try multiple locations: root, /public, /client/public, relative
+function candidates(name){
+  return [
+    `/${name}`,
+    `/public/${name}`,
+    `/client/public/${name}`,
+    `${name}`,
+    `public/${name}`,
+    `client/public/${name}`,
+  ];
+}
+
+function loadFirst(name){
+  return new Promise((resolve) => {
+    const opts = candidates(name);
+    let i = 0;
+    const tryNext = () => {
+      if (i >= opts.length) {
+        console.warn(`Cloud image not found for any path: ${name}`);
+        resolve(null);
+        return;
+      }
+      const src = opts[i++];
+      const img = new Image();
+      img.onload  = () => { console.log("✅ cloud loaded:", src); resolve(img); };
+      img.onerror = () => { console.warn("❌ failed:", src); tryNext(); };
+      img.src = src;
+    };
+    tryNext();
   });
 }
 
@@ -239,15 +261,14 @@ let clouds = [];
 let cloudsReady = false;
 
 async function initClouds(){
-  cloudImgs = (await Promise.all(CLOUD_SRCS.map(loadImg))).filter(Boolean);
-
-  // If nothing loaded, bail early (we’ll skip drawing).
-  if (!cloudImgs.length) {
-    console.warn("No cloud PNGs loaded from client/public/");
+  const loaded = await Promise.all(CLOUD_FILES.map(loadFirst));
+  cloudImgs = loaded.filter(Boolean);
+  if (!cloudImgs.length){
+    console.warn("No clouds loaded — check file paths / commit images.");
     return;
   }
 
-  // Spawn some clouds ON-SCREEN so you can see them immediately.
+  // Spawn visible on-screen so you can see them immediately
   const N = 6;
   clouds = Array.from({length:N}).map(() => {
     const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
@@ -279,7 +300,6 @@ function drawClouds(){
 
     c.x += c.speed;
     if (c.x > canvas.width + 120){
-      // recycle from left with new randoms
       const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
       const scale = 0.6 + Math.random()*0.7;
       const nw = img.naturalWidth  * scale;
