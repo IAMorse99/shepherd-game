@@ -217,18 +217,32 @@ function drawAnimatedFX(cam, t) {
   }
 }
 
-/* ===== CLOUDS (image-based) =====
-   PNGs live at: client/public/cloud1.png, cloud2.png, cloud3.png
-   We load them, then spawn clouds on-screen so you see them right away.
-*/
-const CLOUD_SRCS = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
+/* ===== CLOUDS (robust loader + visible fallback) ===== */
+const CLOUDS_ON = true;
 
-function loadImg(src){
-  return new Promise(res => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = () => { console.warn("Cloud image failed:", src); res(new Image()); };
-    i.src = src;
+// try multiple URL candidates so it works whether assets are at / or /public/
+const CANDIDATES = (name) => [
+  `public/${name}`,   // your current layout (client/public/…)
+  `${name}`,          // if files end up next to index.html
+  `/public/${name}`,  // absolute /public
+  `/${name}`          // absolute root
+];
+
+function loadFirstAvailable(name){
+  return new Promise((resolve) => {
+    let idx = 0, img = new Image();
+    const tryNext = () => {
+      if (idx >= CANDIDATES(name).length) {
+        console.warn("Cloud image failed all paths:", name);
+        resolve(null); return;
+      }
+      const src = CANDIDATES(name)[idx++];
+      const test = new Image();
+      test.onload = () => resolve(test);
+      test.onerror = tryNext;
+      test.src = src;
+    };
+    tryNext();
   });
 }
 
@@ -237,20 +251,23 @@ let clouds = [];
 let cloudsReady = false;
 
 async function initClouds(){
-  cloudImgs = await Promise.all(CLOUD_SRCS.map(loadImg));
-  // create 6 clouds; start within the current canvas bounds so they’re visible
-  clouds = Array.from({length: 6}).map(() => {
-    const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
-    const scale = 0.7 + Math.random()*0.7;              // a bit larger to notice
-    const w = (img.naturalWidth  || 512) * scale;
-    const h = (img.naturalHeight || 512) * scale;
+  const files = ["cloud1.png","cloud2.png","cloud3.png"];
+  const loaded = await Promise.all(files.map(loadFirstAvailable));
+  cloudImgs = loaded.filter(Boolean);
+  if (cloudImgs.length === 0){
+    console.warn("No cloud PNGs loaded — using placeholder circles.");
+  }
+  // spawn some entities on‑screen so you see them immediately
+  const N = 6;
+  clouds = Array.from({length:N}).map(() => {
+    const img = cloudImgs.length ? cloudImgs[Math.floor(Math.random()*cloudImgs.length)] : null;
+    const scale = 0.7 + Math.random()*0.7;
+    const w = (img?.naturalWidth  || 320) * scale;
+    const h = (img?.naturalHeight || 180) * scale;
     return {
-      img,
-      x: Math.random() * (canvas.width  - w),            // visible now
-      y: Math.random() * (canvas.height - h),
-      scale,
-      speed: 0.05 + Math.random()*0.06,
-      alpha: 0.20 + Math.random()*0.08                  // higher alpha to confirm
+      img, x: Math.random()*(canvas.width - w), y: Math.random()*(canvas.height - h),
+      scale, speed: 0.05 + Math.random()*0.06, alpha: 0.22 + Math.random()*0.08,
+      w, h
     };
   });
   cloudsReady = true;
@@ -258,28 +275,50 @@ async function initClouds(){
 initClouds();
 
 function drawClouds(){
-  if (!cloudsReady) return;
+  if (!CLOUDS_ON || !cloudsReady) return;
+
   ctx.save();
   clouds.forEach(c => {
-    const w = (c.img.naturalWidth  || 0) * c.scale;
-    const h = (c.img.naturalHeight || 0) * c.scale;
-    if (w > 0 && h > 0){
+    // draw PNG if available, else draw a soft placeholder blob (so we SEE something)
+    if (c.img && c.img.naturalWidth && c.img.naturalHeight){
+      const w = (c.img.naturalWidth)  * c.scale;
+      const h = (c.img.naturalHeight) * c.scale;
       ctx.globalAlpha = c.alpha;
       ctx.drawImage(c.img, c.x, c.y, w, h);
+      c.w = w; c.h = h;
+    } else {
+      const r = Math.max(80, Math.min(canvas.width, canvas.height) * 0.12);
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = "#0b140f";
+      ctx.beginPath(); ctx.arc(c.x + r, c.y + r*0.6, r, 0, Math.PI*2); ctx.fill();
+      c.w = r*2; c.h = r*1.2;
     }
-    // drift right
+
+    // drift
     c.x += c.speed;
-    if (w > 0 && c.x > canvas.width + 120){
-      c.img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
-      c.scale = 0.7 + Math.random()*0.7;
-      const nw = (c.img.naturalWidth||512)*c.scale;
-      const nh = (c.img.naturalHeight||512)*c.scale;
-      c.x = -nw - 60;
-      c.y = Math.random() * (canvas.height - nh);
-      c.alpha = 0.20 + Math.random()*0.08;
+    if (c.x > canvas.width + 120){
+      // recycle
+      if (cloudImgs.length) c.img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
+      c.scale = 0.6 + Math.random()*0.7;
+      c.alpha = 0.18 + Math.random()*0.08;
       c.speed = 0.05 + Math.random()*0.06;
+      const w = (c.img?.naturalWidth || 320) * c.scale;
+      const h = (c.img?.naturalHeight|| 180) * c.scale;
+      c.x = -w - 60;
+      c.y = Math.random() * (canvas.height - h);
+      c.w = w; c.h = h;
     }
   });
+  ctx.restore();
+
+  // tiny “loaded” badge so we know drawClouds ran
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(8, 8, 64, 18);
+  ctx.fillStyle = "#fff";
+  ctx.font = "12px sans-serif";
+  ctx.fillText(cloudImgs.length ? "CLOUDS" : "CLOUDS*", 14, 21); // * = placeholder
   ctx.restore();
 }
 
