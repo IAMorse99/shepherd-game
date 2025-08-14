@@ -84,8 +84,8 @@ wolves.draw = function(ctx, cam, TILE){
 /* ===== NET (WS) ===== */
 const params = new URLSearchParams(location.search);
 const myName = params.get("n") || ("Shep_" + Math.random().toString(36).slice(2,6));
-// Point this to your deployed server. For local testing use ws://localhost:8787
-const SERVER_WS_URL = params.get("ws") || "ws://localhost:8787";
+// Default to your Railway deployment; ?ws= can still override for testing.
+const SERVER_WS_URL = params.get("ws") || "wss://shepherd-game-production.up.railway.app";
 
 const net = createNetWS({ url: SERVER_WS_URL });
 net.connect(myName);
