@@ -12,7 +12,7 @@ import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
 import { buildBridges, toBridgeSet } from "./bridges.js";
 import { createWolvesManager } from "./wolves.js";
-import { createClouds } from "./clouds.js"; // ⬅️ NEW
+import { createNet } from "./net.js";       // ⬅️ NEW (Supabase presence)
 
 /* ===== CONFIG ===== */
 const TILE = 20;
@@ -23,6 +23,9 @@ const MINIMAP = { size: 220, pad: 12 };
 // Food patches
 const FOOD_PATCH_COUNT = 140;
 const FOOD_RESPAWN_EVERY_MS = 1500;
+
+// Multiplayer (throttle)
+const NET_SEND_MS = 66; // ~15fps to the network
 
 /* ===== CANVAS ===== */
 const canvas = document.getElementById("map");
@@ -46,7 +49,12 @@ const tileKey = (x,y) => `${x},${y}`;
 /* ===== PLAYER & INPUT ===== */
 const player = createPlayer({ cx: world.cx, edges: world.edges });
 const held = { up:false, down:false, left:false, right:false };
-const keymap = { "ArrowUp":"up","KeyW":"up","ArrowDown":"down","KeyS":"down","ArrowLeft":"left","KeyA":"left","ArrowRight":"right","KeyD":"right" };
+const keymap = {
+  "ArrowUp":"up","KeyW":"up",
+  "ArrowDown":"down","KeyS":"down",
+  "ArrowLeft":"left","KeyA":"left",
+  "ArrowRight":"right","KeyD":"right"
+};
 addEventListener("keydown", e => { const k = keymap[e.code]; if (!k) return; held[k]=true; e.preventDefault(); });
 addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; held[k]=false; e.preventDefault(); });
 
@@ -57,13 +65,24 @@ sheepMgr.addSheep(2, player);
 /* ===== WOLVES ===== */
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 
-/* ===== CLOUDS (screen-space with light parallax) ===== */
-const clouds = createClouds({
-  canvas,
-  count: 7,
-  parallax: 0.18,
-  images: ["assets/cloud1.png","assets/cloud2.png","assets/cloud3.png"]
+/* ===== MULTI (Supabase Realtime presence) ===== */
+const params = new URLSearchParams(location.search);
+const myName = params.get("n") || ("Shep_" + Math.random().toString(36).slice(2,6));
+
+// ⬇️ Paste your values:
+const SUPABASE_URL  = "https://keyrkzjqxhzhznltsjmp.supabase.co";   // <-- replace
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtleXJrempxeGh6aHpubHRzam1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNDM3MzksImV4cCI6MjA3MDcxOTczOX0.02TM31EamVlKzYVYaWQLysuVHL36H3ng5_d90mT8sIk";               // <-- replace
+
+const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
+net.connect(myName);
+
+// remote players we render (id -> {id,name,x,y,ts})
+const others = new Map();
+net.onUpsert((p) => {
+  if (p.id === net.id) return; // ignore self
+  others.set(p.id, p);
 });
+net.onRemove((id) => others.delete(id));
 
 /* ===== CAMERA ===== */
 function cameraRect(){
@@ -93,32 +112,23 @@ function nearestPatchInTiles(xPx, yPx, maxTiles){
   return { tx: best.tx, ty: best.ty, distTiles: Math.sqrt(best.d2) };
 }
 
-/* ===== HUD (sheep count only, top-right) ===== */
+/* ===== HUD ===== */
 function drawHUD(){
-  const pad = 12;
-  const label = `Sheep: ${sheepMgr.count}`;
-
+  // top-right sheep count only
+  const text = `Sheep: ${sheepMgr.count}`;
   ctx.save();
   ctx.font = "14px system-ui, sans-serif";
-  const textW = ctx.measureText(label).width;
-
-  const boxW = textW + 20;
-  const boxH = 28;
-  const x = ctx.canvas.width - boxW - pad; // top-right
-  const y = pad;
-
-  // backdrop
+  const w = ctx.measureText(text).width + 16;
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(x, y, boxW, boxH);
-
-  // text
+  ctx.fillRect(ctx.canvas.width - w - 12, 10, w, 28);
   ctx.fillStyle = "#fff";
-  ctx.fillText(label, x + 10, y + 19);
+  ctx.fillText(text, ctx.canvas.width - w - 4, 28);
   ctx.restore();
 }
 
 /* ===== LOOP ===== */
 let last = performance.now();
+let lastNet = 0;
 
 function loop(now){
   const dt = now - last; last = now;
@@ -135,7 +145,7 @@ function loop(now){
     }
   }
 
-  // Treat "moving" as "any key held"
+  // consider "moving" = keys held (for sheep follow logic)
   const moving = (held.up || held.down || held.left || held.right);
 
   // update sheep (follow + food seeking)
@@ -171,25 +181,56 @@ function loop(now){
     }
   }
 
+  // network: send my position on a throttle
+  if (now - lastNet > NET_SEND_MS) {
+    net.setState(player.x, player.y);
+    lastNet = now;
+  }
+
   // camera
   const cam = cameraRect();
 
-  // world + FX (background)
+  // world + FX
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
   drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
 
-  // bridges + patches
+  // bridges + patches (under entities)
   drawBridges(ctx, cam, TILE, bridgeTiles);
   drawFoodPatches(ctx, cam, TILE, foodPatches);
 
-  // wolves + entities
+  // wolves (above patches, below players)
   wolves.draw(ctx, cam, TILE);
+
+  // other players (simple markers for now)
+  for (const p of others.values()) {
+    const sx = p.x * TILE + TILE/2 - cam.x;
+    const sy = p.y * TILE + TILE/2 - cam.y;
+
+    // shadow
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath(); ctx.ellipse(sx, sy + TILE*0.18, TILE*0.28, TILE*0.14, 0, 0, Math.PI*2);
+    ctx.fill(); ctx.restore();
+
+    // marker
+    ctx.beginPath(); ctx.arc(sx, sy, TILE*0.35, 0, Math.PI*2);
+    ctx.fillStyle = "#d1f"; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "#1c1c1c"; ctx.stroke();
+
+    // name tag
+    ctx.save();
+    ctx.font = "12px system-ui, sans-serif";
+    const w = ctx.measureText(p.name).width;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(sx - w/2 - 6, sy - TILE*0.9 - 14, w + 12, 16);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(p.name, sx - w/2, sy - TILE*0.9 - 2);
+    ctx.restore();
+  }
+
+  // local entities
   sheepMgr.draw(ctx, cam);
   drawPlayer(ctx, player, TILE, cam);
-
-  // clouds in front of entities (under UI)
-  clouds.update(now, dt, cam);
-  clouds.draw(ctx, cam); // ⬅️ add cam here
 
   // UI
   drawMinimap(ctx, world.mapLayer, cam, player, { TILE, WORLD, worldPx: world.worldPx, MINIMAP });
