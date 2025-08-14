@@ -2,44 +2,55 @@
 "use strict";
 
 /**
- * Sheep manager (flocking edition):
- * - Flocking: separation + cohesion(to player) + alignment
- * - Hungry sheep seek nearby food (seekFood callback from main)
- * - Eat via sheepMgr.eat(s, n), capped at mealsToBreed
+ * Sheep manager (smooth flocking, tight follow):
+ * - Smooth steering (lerped velocity, capped force)
+ * - Stay with player; catch-up boost when far behind
+ * - Only wander when hungry AND a food patch is within seek range
+ * - Hungry sheep drift to nearby food (seekFood callback from main)
  * - Breed: two full sheep off cooldown spawn a lamb
  */
 export function createSheepManager(env) {
   const { TILE, WORLD, edges, radial } = env;
 
-  // -------- Tunables (feel free to tweak) --------
-  const MAX_SPEED       = TILE * 15;     // px/s cap
-  const MAX_FORCE       = TILE * 30;     // px/s^2 steering cap
-  const VIEW_RADIUS     = TILE * 2;      // neighbor awareness radius (px)
-  const SEP_RADIUS      = TILE * 10.0;    // separation radius (px)
-  const ALIGN_RADIUS    = TILE * 2.0;    // alignment radius (px)
-  const COHESION_RADIUS = TILE * 8.0;    // cohesion "feels" player up to this
+  // ====== Tunables ======
+  // Speeds
+  const BASE_MAX_SPEED   = TILE * 10;   // normal top speed
+  const RUN_SPEED        = TILE * 14;   // when player is moving
+  const CATCHUP_SPEED    = TILE * 18;   // when far from player anchor
 
-  // Weights for steering components
-  const W_SEP       = 1.8;
-  const W_ALIGN     = 0.6;
-  const W_COHESION  = 1.1;
-  const W_FOOD      = 1.7;  // hungry drift → food
+  // Steering / smoothing
+  const MAX_FORCE        = TILE * 40;   // px/s^2 cap on steering force
+  const VEL_LERP         = 0.18;        // 0..1 how much of new vel we keep each tick
 
-  // Food seeking
-  const IDLE_SEEK_TILES =  Math.ceil((TILE * 5) / TILE); // ≈5 tiles
-  const SEEK_SPEED      =  TILE * 8;   // speed toward food target
+  // Flocking radii
+  const VIEW_RADIUS      = TILE * 5;    // neighbor awareness
+  const SEP_RADIUS       = TILE * 1.7;  // keep a bit of “personal space”
+  const ALIGN_RADIUS     = TILE * 3.6;
+
+  // Weights
+  const W_SEP            = 1.9;
+  const W_ALIGN          = 0.55;
+  const W_COHESION       = 1.6;         // pull toward player anchor
+  const W_FOOD           = 1.9;         // hungry drift → food
+
+  // Player anchor handling
+  const ANCHOR_RADIUS    = TILE * 6;    // “close enough” to player
+  const CATCHUP_RADIUS   = TILE * 14;   // beyond this, use catch-up speed
+
+  // Food seeking (only if hungry)
+  const IDLE_SEEK_TILES  = 5;           // search radius in tiles
+  const SEEK_SPEED       = TILE * 10;   // approach speed to a patch
 
   // Breeding balance
-  const MEALS_TO_BREED     = 3;
-  const BREED_COOLDOWN_MS  = 8000;
+  const MEALS_TO_BREED   = 3;
+  const BREED_COOLDOWN_MS= 8000;
 
-  // ------------------------------------------------
+  // ======================
 
   const sheep = []; // [{x,y,vx,vy,phase,full,cd}]
 
   function clampToPasture(x, y) {
     if (radial(x / TILE, y / TILE) <= edges.pasture + 0.2) return { x, y };
-    // pull back toward center on the pasture boundary
     const cx = Math.floor(WORLD / 2) * TILE + TILE / 2;
     const cy = Math.floor(WORLD / 2) * TILE + TILE / 2;
     const dx = x - cx, dy = y - cy;
@@ -52,13 +63,12 @@ export function createSheepManager(env) {
     for (let i = 0; i < n; i++) {
       const px = player.x * TILE + TILE / 2;
       const py = player.y * TILE + TILE / 2;
-      const angle = Math.random() * Math.PI * 2;
-      const dist  = TILE * (1.2 + Math.random() * 1.2);
+      const ang = Math.random() * Math.PI * 2;
+      const dist = TILE * (1 + Math.random() * 1.5);
       const s = {
-        x: px + Math.cos(angle) * dist,
-        y: py + Math.sin(angle) * dist,
-        vx: (Math.random()-0.5) * TILE * 2,
-        vy: (Math.random()-0.5) * TILE * 2,
+        x: px + Math.cos(ang) * dist,
+        y: py + Math.sin(ang) * dist,
+        vx: 0, vy: 0,
         phase: Math.random() * Math.PI * 2,
         full: 0,
         cd: 0
@@ -75,14 +85,15 @@ export function createSheepManager(env) {
   }
 
   function limit(vx, vy, max) {
-    const s = Math.hypot(vx, vy);
-    if (s > max && s > 1e-6) {
-      const k = max / s; return { vx: vx * k, vy: vy * k };
+    const m = Math.hypot(vx, vy);
+    if (m > max && m > 1e-6) {
+      const k = max / m;
+      return { vx: vx * k, vy: vy * k };
     }
     return { vx, vy };
   }
 
-  function steerToward(sx, sy, tx, ty, speed = MAX_SPEED) {
+  function steerToward(sx, sy, tx, ty, speed) {
     const dx = tx - sx, dy = ty - sy;
     const d  = Math.hypot(dx, dy) || 1e-6;
     const desiredX = (dx / d) * speed;
@@ -103,15 +114,13 @@ export function createSheepManager(env) {
 
   function update(now, dtMs, { player, moving, seekFood }) {
     const dt = Math.max(0.001, dtMs / 1000);
-
     const px = player.x * TILE + TILE / 2;
     const py = player.y * TILE + TILE / 2;
 
-    // Precompute neighbors (naive O(n^2) works fine for small herds)
     for (let i = 0; i < sheep.length; i++) {
       const s = sheep[i];
 
-      // --- Flocking forces ---
+      // Neighbor forces (simple O(n^2) – OK for small flocks)
       let sepX = 0, sepY = 0, sepCount = 0;
       let alignX = 0, alignY = 0, alignCount = 0;
 
@@ -122,52 +131,40 @@ export function createSheepManager(env) {
         const d  = Math.hypot(dx, dy);
         if (d < 1e-6 || d > VIEW_RADIUS) continue;
 
-        // Separation
         if (d < SEP_RADIUS) {
           const inv = 1 / Math.max(d, 0.001);
-          sepX += (dx * inv);
-          sepY += (dy * inv);
-          sepCount++;
+          sepX += dx * inv; sepY += dy * inv; sepCount++;
         }
-
-        // Alignment
         if (d < ALIGN_RADIUS) {
-          alignX += o.vx; alignY += o.vy;
-          alignCount++;
+          alignX += o.vx; alignY += o.vy; alignCount++;
         }
       }
 
-      // Normalize separation
       if (sepCount > 0) {
         const mag = Math.hypot(sepX, sepY) || 1e-6;
-        sepX = (sepX / mag) * MAX_SPEED - s.vx;
-        sepY = (sepY / mag) * MAX_SPEED - s.vy;
+        sepX = (sepX / mag) * BASE_MAX_SPEED - s.vx;
+        sepY = (sepY / mag) * BASE_MAX_SPEED - s.vy;
       }
 
-      // Alignment steer
       if (alignCount > 0) {
-        alignX = (alignX / alignCount);
-        alignY = (alignY / alignCount);
-        const lim = limit(alignX, alignY, MAX_SPEED);
+        alignX = alignX / alignCount;
+        alignY = alignY / alignCount;
+        const lim = limit(alignX, alignY, BASE_MAX_SPEED);
         alignX = lim.vx - s.vx;
         alignY = lim.vy - s.vy;
       }
 
-      // Cohesion toward player (stronger when player is moving)
-      let cohX = 0, cohY = 0;
-      {
-        const { ax, ay } = steerToward(s.x, s.y, px, py, MAX_SPEED * 0.8);
-        cohX = ax - s.vx; cohY = ay - s.vy;
+      // Cohesion toward player (strong; ensures they keep up)
+      const distToPlayer = Math.hypot(s.x - px, s.y - py);
+      let followSpeed = BASE_MAX_SPEED;
+      if (moving) followSpeed = RUN_SPEED;
+      if (distToPlayer > CATCHUP_RADIUS) followSpeed = CATCHUP_SPEED;
 
-        // fade cohesion when far from player beyond radius to avoid yanking
-        const dp = Math.hypot(s.x - px, s.y - py);
-        const falloff = Math.max(0.15, Math.min(1, 1 - Math.max(0, dp - COHESION_RADIUS) / (COHESION_RADIUS*0.75)));
-        const moveBoost = moving ? 1.2 : 1.0;
-        cohX *= falloff * moveBoost;
-        cohY *= falloff * moveBoost;
-      }
+      const coh = steerToward(s.x, s.y, px, py, followSpeed);
+      let cohX = coh.ax - s.vx;
+      let cohY = coh.ay - s.vy;
 
-      // Food seeking (only if hungry)
+      // Only wander if hungry AND there’s food in reach
       let foodX = 0, foodY = 0;
       if (s.full < MEALS_TO_BREED && typeof seekFood === "function") {
         const found = seekFood(s.x, s.y, IDLE_SEEK_TILES);
@@ -175,47 +172,45 @@ export function createSheepManager(env) {
           const fx = found.tx * TILE + TILE/2;
           const fy = found.ty * TILE + TILE/2;
           const desire = steerToward(s.x, s.y, fx, fy, SEEK_SPEED);
-          foodX = (desire.ax - s.vx);
-          foodY = (desire.ay - s.vy);
+          foodX = desire.ax - s.vx;
+          foodY = desire.ay - s.vy;
         }
       }
+      // If no food target and player isn’t moving, do NOT roam:
+      // cohesion keeps them hovering near the player.
 
       // Combine forces
       let ax = 0, ay = 0;
-      ax += sepX * W_SEP;
-      ay += sepY * W_SEP;
-      ax += alignX * W_ALIGN;
-      ay += alignY * W_ALIGN;
-      ax += cohX * W_COHESION;
-      ay += cohY * W_COHESION;
-      ax += foodX * W_FOOD;
-      ay += foodY * W_FOOD;
+      ax += sepX * W_SEP;      ay += sepY * W_SEP;
+      ax += alignX * W_ALIGN;  ay += alignY * W_ALIGN;
+      ax += cohX * W_COHESION; ay += cohY * W_COHESION;
+      ax += foodX * W_FOOD;    ay += foodY * W_FOOD;
 
-      // Clamp steering
-      const limF = limit(ax, ay, MAX_FORCE);
-      ax = limF.vx; ay = limF.vy;
+      // Clamp steering, integrate velocity with smoothing
+      const limA = limit(ax, ay, MAX_FORCE);
+      const targetVx = s.vx + limA.vx * dt;
+      const targetVy = s.vy + limA.vy * dt;
 
-      // Integrate velocity
-      s.vx += ax * dt;
-      s.vy += ay * dt;
+      // Smooth velocity (lerp) to avoid jitter/sharp turns
+      s.vx = s.vx + (targetVx - s.vx) * VEL_LERP;
+      s.vy = s.vy + (targetVy - s.vy) * VEL_LERP;
 
-      // Clamp speed
-      const limV = limit(s.vx, s.vy, MAX_SPEED);
+      // Cap final speed (use the same speed cap we chose above)
+      const speedCap = followSpeed; // dynamic cap based on context
+      const limV = limit(s.vx, s.vy, speedCap);
       s.vx = limV.vx; s.vy = limV.vy;
 
       // Integrate position
       s.x += s.vx * dt;
       s.y += s.vy * dt;
 
-      // Keep inside pasture
+      // Keep inside pasture boundary
       const c = clampToPasture(s.x, s.y);
       s.x = c.x; s.y = c.y;
 
-      // Cute wobble phase
       s.phase += dt * 0.9;
     }
 
-    // Breeding pass
     tryBreed(player, dtMs);
   }
 
