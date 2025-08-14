@@ -9,6 +9,7 @@ import { Sprites, drawSpriteCentered } from "./sprites.js";
  * - If hungry AND nearby patch: bee-line to it
  * - Smooth velocity blending
  * - Draws sprite if available, else circles
+ * - ALWAYS shows hunger ring
  */
 export function createSheepManager(env) {
   const { TILE, WORLD, edges, radial } = env;
@@ -160,8 +161,8 @@ export function createSheepManager(env) {
       ctx.fill();
       ctx.restore();
 
-      // sprite (size ~ 0.9 tile)
-      const size = TILE * 0.9;
+      // sprite — bigger now (≈105% of a tile)
+      const size = TILE * 1.05;
       const drawn = drawSpriteCentered(ctx, Sprites.sheep, sx, sy, size, size, 1);
 
       if (!drawn){
@@ -170,18 +171,20 @@ export function createSheepManager(env) {
         ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
         ctx.fillStyle = "#ffffff"; ctx.fill();
         ctx.lineWidth = 2; ctx.strokeStyle = "#1c1c1c"; ctx.stroke();
+      }
 
-        // fullness ring
-        if (s.full > 0) {
-          ctx.save();
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = "rgba(0,0,0,0.55)";
-          const portion = s.full / MEALS_TO_BREED;
-          ctx.beginPath();
-          ctx.arc(sx, sy, r + 3, -Math.PI/2, -Math.PI/2 + Math.PI*2*portion);
-          ctx.stroke();
-          ctx.restore();
-        }
+      // HUNGER RING — always draw, even when sprite is used
+      if (s.full > 0) {
+        const portion = s.full / MEALS_TO_BREED;
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        // pick a radius that looks good with both sprite and fallback
+        const ringR = TILE * 0.38;
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR, -Math.PI/2, -Math.PI/2 + Math.PI*2*portion);
+        ctx.stroke();
+        ctx.restore();
       }
     }
   }

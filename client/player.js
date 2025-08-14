@@ -54,8 +54,8 @@ export function drawPlayer(ctx, player, TILE, cam){
   ctx.fill();
   ctx.restore();
 
-  // sprite (about 90% of a tile)
-  const size = TILE * 0.9;
+  // sprite — bigger now (≈110% of a tile)
+  const size = TILE * 1.10;
   const drawn = drawSpriteCentered(ctx, Sprites.player, sx, sy, size, size, 1);
 
   if (!drawn){
