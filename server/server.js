@@ -15,6 +15,8 @@ const SNAP_MS = 100;           // snapshot rate (same as tick for now)
 const cx = Math.floor(WORLD/2);
 const cy = Math.floor(WORLD/2);
 const maxR = Math.min(cx, cy) - 1;
+const PLAYER_SPEED_TPS = 6.5;
+
 
 let rPasture = Math.floor(maxR * 0.45);
 let rWater   = Math.floor(maxR * 0.17);
@@ -292,16 +294,20 @@ setInterval(() => {
 
   // advance players on a cadence (grid)
   for (const [id, p] of players) {
-    p.moveCooldown -= dtMs;
-    if (p.moveCooldown <= 0) {
-      const dir = p.held.up ? [0,-1] : p.held.down ? [0,1] : p.held.left ? [-1,0] : p.held.right ? [1,0] : null;
-      if (dir) {
-        const nx = p.x + dir[0], ny = p.y + dir[1];
-        if (canWalk(nx, ny)) { p.x = nx; p.y = ny; }
-        p.moveCooldown = STEP_MS;
+    let dx = (p.held.right?1:0) - (p.held.left?1:0);
+    let dy = (p.held.down ?1:0) - (p.held.up  ?1:0);
+    if (dx||dy) {
+      const len = Math.hypot(dx,dy) || 1; dx/=len; dy/=len;
+      const nx = p.x + dx*PLAYER_SPEED_TPS*dt;
+      const ny = p.y + dy*PLAYER_SPEED_TPS*dt;
+      if (canWalk(Math.floor(nx), Math.floor(ny))) { p.x = nx; p.y = ny; }
+      else {
+        if (canWalk(Math.floor(nx), Math.floor(p.y))) p.x = nx;
+        if (canWalk(Math.floor(p.x), Math.floor(ny))) p.y = ny;
       }
     }
   }
+
 
   // simulate each herd (follow + seek + graze + breed)
   for (const [id, flock] of herds) {
@@ -420,8 +426,10 @@ setInterval(() => {
   if (accumSnap >= SNAP_MS) {
     accumSnap = 0;
 
-    const playersSnap = [];
-    for (const [id,p] of players) playersSnap.push({ id, name:p.name, x:p.x, y:p.y });
+  for (const [id,p] of players) {
+    playersSnap.push({ id, name:p.name, x:+p.x.toFixed(3), y:+p.y.toFixed(3) });
+  }
+
 
     const herdsSnap = {};
     for (const [id,flock] of herds) {
