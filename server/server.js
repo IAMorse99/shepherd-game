@@ -110,7 +110,7 @@ function nearestPatchInTiles(foodPatches, xPx, yPx, maxTiles){
   let best = null;
   for (const key of foodPatches) {
     const [xs, ys] = key.split(",");
-    const tx = +xs, ty = +ys;
+    the const tx = +xs, ty = +ys;
     const dx = tx - tx0, dy = ty - ty0;
     const d2 = dx*dx + dy*dy;
     if (d2 <= maxTiles*maxTiles) {
@@ -124,7 +124,7 @@ function nearestPatchInTiles(foodPatches, xPx, yPx, maxTiles){
 /* ===== Authoritative State ===== */
 const players = new Map(); // id -> {id,name,x,y,held,moveCooldown}
 const herds   = new Map(); // id -> [{x,y,vx,vy,full,cd,ox,oy,phase}]
-let wolves    = [];        // [{x,y,vx,vy,target|null,lifeMs}]
+let wolves    = [];        // [{x,y,vx,vy,target|null,lifeMs,kills}]
 let foodPatches = createFoodPatches(FOOD_PATCH_COUNT);
 let foodRespawnTimer = 0;
 
@@ -158,10 +158,10 @@ function canWalk(nx,ny){
   return r !== "dark"; // block dark forest for now
 }
 
-/* ===== Wolves tuning (NEW) ===== */
-const WOLF_MAX = 5;                // soft cap (was 6)
-const WOLF_SPAWN_CHANCE = 0.05;   // ~0.4% per tick (was 2%) ⇒ ~1 every ~25s on average
-const WOLF_LIFE_MS = 30000;        // wolves despawn after 15 seconds if still around
+/* ===== Wolves tuning ===== */
+const WOLF_MAX = 3;                 // soft cap
+const WOLF_SPAWN_CHANCE = 0.05;     // spawn chance per tick
+const WOLF_LIFE_MS = 20000;         // base lifetime in ms
 
 /* Wolves: spawn in glen/dark and roam; if nearby any sheep, chase */
 function spawnWolf(){
@@ -176,7 +176,8 @@ function spawnWolf(){
         y:y*TILE+TILE/2,
         vx:0, vy:0,
         target:null,
-        life: WOLF_LIFE_MS,   // NEW: lifetime countdown in ms
+        life: WOLF_LIFE_MS,
+        kills: 0,                   // NEW: track kills for one-and-done behavior
       });
       return;
     }
@@ -184,17 +185,17 @@ function spawnWolf(){
 }
 
 function updateWolves(dt, allTargets){
-  // spawn with lower chance up to lower cap
+  // spawn up to soft cap
   if (wolves.length < WOLF_MAX && Math.random() < WOLF_SPAWN_CHANCE) spawnWolf();
 
-  const SPEED = TILE*9.5;
-  const DRIFT = TILE*2.0;
+  const SPEED = TILE * 12.0; // was 9.5 — slightly faster wolves
+  const DRIFT = TILE * 2.0;
 
   // iterate backwards so we can remove wolves that expire
   for (let i = wolves.length - 1; i >= 0; i--) {
     const w = wolves[i];
 
-    // NEW: lifetime countdown & despawn
+    // lifetime countdown & despawn
     w.life = (w.life ?? WOLF_LIFE_MS) - TICK_MS;
     if (w.life <= 0) { wolves.splice(i, 1); continue; }
 
@@ -376,22 +377,32 @@ setInterval(() => {
     }
   }
 
-  // wolves vs sheep
+  // wolves vs sheep — DESPAWN ON FIRST KILL
   const allTargets = [];
   for (const [id, flock] of herds) {
     for (let i=0;i<flock.length;i++) allTargets.push({ herdId:id, idx:i, ref:flock[i] });
   }
   updateWolves(dt, allTargets);
 
-  // wolf capture check
-  for (const w of wolves) {
+  // iterate backwards so we can remove wolves that got a kill
+  for (let i = wolves.length - 1; i >= 0; i--) {
+    const w = wolves[i];
+    let captured = false;
+
     for (const t of allTargets) {
       const d = Math.hypot(w.x - t.ref.x, w.y - t.ref.y);
       if (d < TILE*0.6) {
         const flock = herds.get(t.herdId);
-        if (flock) flock.splice(t.idx, 1);
+        if (flock) flock.splice(t.idx, 1); // remove that sheep
+        w.kills = (w.kills || 0) + 1;
+        captured = true;
         break;
       }
+    }
+
+    if (captured && w.kills >= 1) {
+      // one-and-done wolf: despawn immediately after its first kill
+      wolves.splice(i, 1);
     }
   }
 
@@ -419,8 +430,6 @@ setInterval(() => {
 
     // keep wolves snapshot as [x,y] pairs so the client code stays unchanged
     const wolvesSnap = wolves.map(w => [Math.round(w.x), Math.round(w.y)]);
-
-
 
     broadcast({
       type: "snapshot",
