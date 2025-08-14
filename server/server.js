@@ -138,7 +138,14 @@ function spawnOnPasture(){
     const y = Math.floor(Math.random()*WORLD);
     if (ringAt(x,y)==="pasture") return {x,y};
   }
-  return {x:cx, y:edges.pasture-2};
+// walk outward on +Y until we hit pasture
+let fx = cx, fy = cy;
+for (let i = 0; i < WORLD; i++) {
+  if (ringAt(fx, fy) === "pasture") return { x: fx, y: fy };
+  fy++;
+}
+return { x: cx, y: Math.min(WORLD-2, cy + rPasture) }; // final safety
+
 }
 function ensureHerd(id){
   if (herds.has(id)) return;
@@ -426,17 +433,17 @@ setInterval(() => {
   if (accumSnap >= SNAP_MS) {
     accumSnap = 0;
 
-  for (const [id,p] of players) {
-    playersSnap.push({ id, name:p.name, x:+p.x.toFixed(3), y:+p.y.toFixed(3) });
-  }
-
+    // ✅ ADD THIS
+    const playersSnap = [];
+    for (const [id,p] of players) {
+      playersSnap.push({ id, name:p.name, x:+p.x.toFixed(3), y:+p.y.toFixed(3) });
+    }
 
     const herdsSnap = {};
     for (const [id,flock] of herds) {
       herdsSnap[id] = flock.map(s => [Math.round(s.x), Math.round(s.y), s.full|0, Math.max(0, s.cd|0)]);
     }
 
-    // keep wolves snapshot as [x,y] pairs so the client code stays unchanged
     const wolvesSnap = wolves.map(w => [Math.round(w.x), Math.round(w.y)]);
 
     broadcast({
