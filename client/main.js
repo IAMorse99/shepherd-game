@@ -61,10 +61,14 @@ function applyHerdSnapshot(mgr, snap){
 
 /* ===== WOLVES (drawing only) ===== */
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
-// Only handle snapshot; let wolves.js handle drawing sprites
-wolves.applySnapshot = function(list){
-  this._list = list.map(([x,y]) => ({ x, y }));
+
+// Adapt server's [[x,y], ...] to manager's [x,y,vx,vy,life] and feed real applySnapshot
+const WOLF_DEFAULT_LIFE = 8000; // ms; matches LIFE_MS in wolves.js
+wolves.applySnapshotFromServer = function(list){
+  const arr = list.map(([x,y]) => [x, y, 0, 0, WOLF_DEFAULT_LIFE]);
+  this.applySnapshot(arr);
 };
+
 
 /* ===== NET (WS) ===== */
 const params = new URLSearchParams(location.search);
@@ -98,7 +102,7 @@ net.onSnapshot((snap) => {
   }
 
   // wolves
-  if (Array.isArray(snap.wolves)) wolves.applySnapshot(snap.wolves);
+ if (Array.isArray(snap.wolves)) wolves.applySnapshotFromServer(snap.wolves);
 
   // patches
   foodPatches = new Set(snap.patches);

@@ -43,26 +43,33 @@ function ringAt(x, y){
 }
 const tileKey = (x,y)=>`${x},${y}`;
 
-/* ===== BRIDGES (4 cardinal) ===== */
+/* ===== BRIDGES (match client: full rays across the water ring) ===== */
 function buildBridges(){
   const bridges = [];
-  const r = edges.glen + Math.floor((edges.water - edges.glen)/2);
-  const at = [
-    { x: cx + r, y: cy },      // E
-    { x: cx - r, y: cy },      // W
-    { x: cx,     y: cy + r },  // S
-    { x: cx,     y: cy - r }   // N
-  ];
-  for (const p of at) {
-    // 5-tile wide bridge across water band
-    for (let i = -2; i <= 2; i++) {
-      const x = p.x + (p.y === cy ? 0 : i);
-      const y = p.y + (p.x === cx ? 0 : i);
-      if (ringAt(x,y) === "water") bridges.push({x,y});
+
+  // walk outward from center; collect every WATER tile on a straight ray
+  function addBridge(dx, dy) {
+    // big enough to reach beyond the water band
+    const maxSteps = Math.max(cx, cy) + 2;
+    for (let i = 0; i <= maxSteps; i++) {
+      const x = cx + dx * i;
+      const y = cy + dy * i;
+      const ring = ringAt(x, y);
+      if (ring === "water") bridges.push({ x, y });
+      // once we've gone past the water band back into pasture, stop this ray
+      if (ring === "pasture" && i > 0) break;
     }
   }
+
+  // N / E / S / W rays
+  addBridge( 0, -1);
+  addBridge( 1,  0);
+  addBridge( 0,  1);
+  addBridge(-1,  0);
+
   return bridges;
 }
+
 const bridges = buildBridges();
 const bridgeSet = new Set(bridges.map(b=>tileKey(b.x,b.y)));
 
@@ -411,7 +418,8 @@ setInterval(() => {
     }
 
     // keep wolves snapshot as [x,y] pairs so the client code stays unchanged
-    const wolvesSnap = wolves.map(w => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+    const wolvesSnap = wolves.map(w => [Math.round(w.x), Math.round(w.y)]);
+
 
 
     broadcast({
