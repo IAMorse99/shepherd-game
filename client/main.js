@@ -23,8 +23,8 @@ const MINIMAP = { size: 220, pad: 12 };
 const FOOD_PATCH_COUNT = 140;
 const FOOD_RESPAWN_EVERY_MS = 1500;
 
-const NET_PLAYER_SEND_MS = 66;    // ~15 fps
-const NET_WORLD_SEND_MS  = 200;   // ~5 fps (herds + patches + wolves)
+const NET_PLAYER_SEND_MS = 66;    // ~15 fps for player positions
+const NET_WORLD_SEND_MS  = 200;   // ~5 fps for world snapshots (herds+patches+wolves)
 
 /* ===== CANVAS ===== */
 const canvas = document.getElementById("map");
@@ -62,55 +62,58 @@ const SUPABASE_ANON = "YOUR-ANON-PUBLIC-KEY";               // <-- paste yours
 const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
 net.connect(myName);
 
-/* Track other players' positions (tile coords), to drive their herd follow logic on host */
+/* Track all players (tile coords) for herd follow + rendering */
 const players = new Map(); // id -> { id, name, x, y, prevX, prevY }
 let myId = null;
 
 net.onUpsert((p) => {
-  // p: { id, name, x, y }
+  // p: { id, name, x, y, self? }
   if (!myId && p.self) myId = p.id;
   const prev = players.get(p.id);
-  players.set(p.id, { id: p.id, name: p.name || "anon", x: p.x|0, y: p.y|0, prevX: prev?.x ?? p.x|0, prevY: prev?.y ?? p.y|0 });
-  ensureHerd(p.id); // make sure they have a herd instance
+  players.set(p.id, {
+    id: p.id,
+    name: p.name || "anon",
+    x: p.x|0,
+    y: p.y|0,
+    prevX: prev?.x ?? (p.x|0),
+    prevY: prev?.y ?? (p.y|0)
+  });
+  ensureHerd(p.id);
 });
 net.onRemove((id) => {
   players.delete(id);
-  // keep their herd around (spectator mode) or remove it:
-  // if you want to remove: herds.delete(id);
+  // Optionally remove their herd: herds.delete(id);
 });
 
 /* ===== HERDS: one SheepManager per player ===== */
 const herds = new Map(); // id -> sheepMgr
-
 function makeSheepMgr() {
   const mgr = createSheepManager({ TILE, WORLD, edges: world.edges, radial: world.radial });
   return mgr;
 }
-
 function ensureHerd(id) {
   if (!herds.has(id)) {
     const mgr = makeSheepMgr();
-    // spawn 2 for a new player; if host will simulate, else follower waits for snapshot
-    if (id === myId) mgr.addSheep(2, player);
+    if (id === myId) mgr.addSheep(2, player); // start with 2 for yourself
     herds.set(id, mgr);
   }
 }
 
-/* Create my own herd immediately; myId is known shortly after connect, but we can use a temp key */
+/* Create my own herd immediately under a temp key; rename once myId is known */
 let selfKey = "self";
 ensureHerd(selfKey);
 
 /* ===== WOLVES ===== */
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 
-/* ===== HOST ELECTION (first in room after a moment) ===== */
+/* ===== HOST ELECTION (first in room) ===== */
 let isHost = false;
 setTimeout(() => {
-  isHost = (net.others.size === 0);          // first in becomes host
-  // Set authority flags on all herds
-  for (const [id, mgr] of herds) mgr.setAuthority(isHost);
+  isHost = (net.others.size === 0);
+  for (const [, mgr] of herds) mgr.setAuthority(isHost);
 }, 700);
 
+/* Followers apply host snapshots */
 net.onSheep((payload) => {
   if (isHost) return; // host ignores snapshots
   // payload: { herds: { playerId: flock[] }, patches: ["x,y",...], wolves: [...] }
@@ -154,7 +157,6 @@ function nearestPatchInTiles(xPx, yPx, maxTiles){
 
 /* ===== HUD ===== */
 function drawHUD(){
-  // show my herd count + total players
   const myMgr = herds.get(myId) || herds.get(selfKey);
   const mine = myMgr ? myMgr.count : 0;
   const text = `Sheep: ${mine} • Players: ${players.size + 1}${isHost ? " (host)" : ""}`;
@@ -188,48 +190,40 @@ function loop(now){
     }
   }
 
-  // Send my position (everyone)
+  // ensure myId when net provides it; rename temp herd
+  if (!myId && net.myId) myId = net.myId;
+  if (myId && herds.has(selfKey) && !herds.has(myId)) {
+    const mgr = herds.get(selfKey);
+    herds.delete(selfKey);
+    herds.set(myId, mgr);
+  }
+  if (myId && !players.has(myId)) {
+    players.set(myId, { id: myId, name: myName, x: player.x, y: player.y, prevX: player.x, prevY: player.y });
+  }
+
+  // broadcast my position
   if (now - lastPlayerSend > NET_PLAYER_SEND_MS) {
     net.setState(player.x, player.y, myName);
     lastPlayerSend = now;
   }
 
-  // Update herds
-  const cam = cameraRect();
   const movingSelf = (held.up || held.down || held.left || held.right);
 
-  // ensure we have myId
-  if (!myId && net.myId) myId = net.myId;
-  if (myId && herds.has(selfKey) && !herds.has(myId)) {
-    // rename temp herd key to my real id
-    const mgr = herds.get(selfKey);
-    herds.delete(selfKey);
-    herds.set(myId, mgr);
-  }
-  // Always ensure we have our own entry in players map too
-  if (myId && !players.has(myId)) {
-    players.set(myId, { id: myId, name: myName, x: player.x, y: player.y, prevX: player.x, prevY: player.y });
-  }
-
-  // HOST: simulate all herds + wolves
   if (isHost) {
-    // 1) Update player entries (host keeps latest self position)
+    // update host's own entry
     const me = players.get(myId);
     if (me) { me.prevX = me.x; me.prevY = me.y; me.x = player.x; me.y = player.y; }
 
-    // 2) For each herd, compute moving flag by tile delta, then update
+    // simulate each herd using its player's position
     for (const [pid, mgr] of herds) {
-      // find leader (player position)
       const p = players.get(pid) || (pid === myId ? { x: player.x, y: player.y, prevX: player.x, prevY: player.y } : null);
       if (!p) continue;
       const moving = (p.x !== p.prevX || p.y !== p.prevY) || (pid === myId && movingSelf);
-      const leaderProxy = (pid === myId)
-        ? player
-        : { x: p.x, y: p.y, moveCooldown: 0 }; // minimal shape used by sheepMgr
+      const leaderProxy = (pid === myId) ? player : { x: p.x, y: p.y, moveCooldown: 0 };
 
-      mgr.update(now, dt, { player: leaderProxy, moving, seekFood: (x,y,maxT)=>nearestPatchInTiles(x,y,maxT) });
+      mgr.update(now, dt, { player: leaderProxy, moving, seekFood: (x,y,m)=>nearestPatchInTiles(x,y,m) });
 
-      // GRAZING (hungry first per herd)
+      // grazing per herd
       const hungryFirst = [...mgr.list].sort((a,b)=>a.full - b.full);
       for (const s of hungryFirst) {
         if (s.full >= mgr.mealsToBreed) continue;
@@ -242,28 +236,24 @@ function loop(now){
         }
       }
 
-      // Store back prev positions
-      if (p) { p.prevX = p.x; p.prevY = p.y; }
+      p.prevX = p.x; p.prevY = p.y;
     }
 
-    // 3) Wolves: build a combined target list that includes herdId + index
-    const targetList = [];
+    // wolves: build combined target list across all herds
+    const targets = [];
     for (const [pid, mgr] of herds) {
       for (let i = 0; i < mgr.list.length; i++) {
-        targetList.push({ herdId: pid, idx: i, ref: mgr.list[i] });
+        targets.push({ herdId: pid, idx: i, ref: mgr.list[i] });
       }
     }
-    wolves.update(now, dt, targetList, (hitIndexInCombined) => {
-      // remove that sheep from its originating herd
-      const t = targetList[hitIndexInCombined];
+    wolves.update(now, dt, targets, (k) => {
+      const t = targets[k];
       if (!t) return;
-      const mgr = herds.get(t.herdId);
-      if (mgr && mgr.list[t.idx]) {
-        mgr.list.splice(t.idx, 1);
-      }
+      const m = herds.get(t.herdId);
+      if (m && m.list[t.idx]) m.list.splice(t.idx, 1);
     });
 
-    // 4) Respawn patches
+    // respawn patches
     foodRespawnTimer += dt;
     if (foodRespawnTimer >= FOOD_RESPAWN_EVERY_MS) {
       foodRespawnTimer = 0;
@@ -273,7 +263,7 @@ function loop(now){
       }
     }
 
-    // 5) Broadcast snapshot (all herds + patches + wolves)
+    // broadcast world snapshot
     if (now - lastWorldSend > NET_WORLD_SEND_MS) {
       const herdsSnap = {};
       for (const [pid, mgr] of herds) herdsSnap[pid] = mgr.serialize();
@@ -282,36 +272,43 @@ function loop(now){
       net.sendSheepSnapshot({ herds: herdsSnap, patches, wolves: wolfSnap });
       lastWorldSend = now;
     }
-  }
-  else {
-    // FOLLOWERS: keep my own herd locally responsive (visual feel) while still overwritten by snapshots
+  } else {
+    // followers: keep my own herd responsive locally (visual feel)
     const myMgr = herds.get(myId) || herds.get(selfKey);
     if (myMgr) {
       myMgr.update(now, dt, { player, moving: movingSelf, seekFood: (x,y,m)=>nearestPatchInTiles(x,y,m) });
     }
   }
 
-  /* ==== RENDER ==== */
+  /* ===== RENDER ===== */
+  const cam = cameraRect();
+
   // world + FX
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
   drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
 
-  // bridges + patches (under entities)
+  // bridges + patches
   drawBridges(ctx, cam, TILE, bridgeTiles);
   drawFoodPatches(ctx, cam, TILE, foodPatches);
 
-  // wolves (draw above patches, below players)
+  // wolves
   wolves.draw(ctx, cam, TILE);
 
-  // draw all herds (draw mine last so it's on top)
+  // draw all herds (draw others first)
   for (const [pid, mgr] of herds) {
     if (pid === myId) continue;
     mgr.draw(ctx, cam);
   }
+
+  // draw other players' shepherd sprites (same look as yours)
+  for (const [pid, info] of players) {
+    if (pid === myId) continue;
+    drawPlayer(ctx, { x: info.x, y: info.y }, TILE, cam);
+  }
+
+  // draw my herd and then me on top
   const myMgr = herds.get(myId) || herds.get(selfKey);
   if (myMgr) myMgr.draw(ctx, cam);
-
-  // draw my player (you can also draw other players if you want — omitted for now)
   drawPlayer(ctx, player, TILE, cam);
 
   // UI
