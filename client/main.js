@@ -11,6 +11,7 @@ import {
 import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
 import { buildBridges, toBridgeSet } from "./bridges.js";
+import { createWolvesManager } from "./wolves.js"; // ⬅️ NEW
 
 /* ===== CONFIG ===== */
 const TILE = 20;
@@ -44,13 +45,16 @@ const tileKey = (x,y) => `${x},${y}`;
 /* ===== PLAYER & INPUT ===== */
 const player = createPlayer({ cx: world.cx, edges: world.edges });
 const held = { up:false, down:false, left:false, right:false };
-const keymap = { "ArrowUp":"up","KeyW":"up","ArrowDown":"down","KeyS":"down","ArrowLeft":"left","KeyA":"left","ArrowRight":"right","KeyD":"right" };
+const keymap = { "ArrowUp":"up","KeyW":"up","ArrowDown":"down","KeyS":"down","ArrowLeft":"left","KeyA":"left","KeyD":"right" };
 addEventListener("keydown", e => { const k = keymap[e.code]; if (!k) return; held[k]=true; e.preventDefault(); });
 addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; held[k]=false; e.preventDefault(); });
 
 /* ===== SHEEP ===== */
 const sheepMgr = createSheepManager({ TILE, WORLD, edges: world.edges, radial: world.radial });
 sheepMgr.addSheep(2, player);
+
+/* ===== WOLVES ===== */
+const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 
 /* ===== CAMERA ===== */
 function cameraRect(){
@@ -62,9 +66,7 @@ function cameraRect(){
   return { x: camX, y: camY, w: vw, h: vh };
 }
 
-/* ===== FOOD SEEK HELPER (for sheep) =====
-   Returns nearest patch tile {tx,ty,distTiles} within maxTiles, or null.
-   Simple O(N) scan over ~140 patches — fine for now. */
+/* ===== FOOD SEEK HELPER (for sheep) ===== */
 function nearestPatchInTiles(xPx, yPx, maxTiles){
   const tx0 = Math.floor(xPx / TILE);
   const ty0 = Math.floor(yPx / TILE);
@@ -108,7 +110,7 @@ function loop(now){
     if (tryMove(player, held, { WORLD, ringAt: world.ringAt, bridgeSet })) {
       player.moveCooldown = STEP_MS;
       movedThisTick = true;
-    } else if (!held.up && !held.down && !held.left && !held.right) {
+    } else if (!held.up && !held.down && !held.right && !held.left) {
       player.moveCooldown = 0;
     } else {
       player.moveCooldown = STEP_MS;
@@ -117,27 +119,30 @@ function loop(now){
   const moving = movedThisTick || (player.x !== prevPX || player.y !== prevPY);
   prevPX = player.x; prevPY = player.y;
 
-  // update sheep (pass food seeker so idle sheep can drift toward patches)
+  // update sheep (flocking + food seeking)
   sheepMgr.update(now, dt, {
     player,
     moving,
     seekFood: (x,y,maxTiles) => nearestPatchInTiles(x,y,maxTiles)
   });
 
-  // GRAZING: check hungry-first so the front sheep can’t steal all the food
+  // Hungry-first grazing
   const hungryFirst = [...sheepMgr.list].sort((a,b)=>a.full - b.full);
   for (const s of hungryFirst) {
-    if (s.full >= sheepMgr.mealsToBreed) continue; // already full; skip
+    if (s.full >= sheepMgr.mealsToBreed) continue;
     const tx = Math.floor(s.x / TILE);
     const ty = Math.floor(s.y / TILE);
     const key = tileKey(tx, ty);
     if (foodPatches.has(key)) {
       foodPatches.delete(key);
-      sheepMgr.eat(s, 1); // +1 meal
+      sheepMgr.eat(s, 1);
     }
   }
 
-  // Respawn patches gradually to maintain target count
+  // Wolves (can remove sheep directly from the manager's list)
+  wolves.update(now, dt, sheepMgr.list);
+
+  // Respawn patches to maintain count
   foodRespawnTimer += dt;
   if (foodRespawnTimer >= FOOD_RESPAWN_EVERY_MS) {
     foodRespawnTimer = 0;
@@ -157,6 +162,9 @@ function loop(now){
   // bridges + patches (under entities)
   drawBridges(ctx, cam, TILE, bridgeTiles);
   drawFoodPatches(ctx, cam, TILE, foodPatches);
+
+  // wolves (draw above patches, below player)
+  wolves.draw(ctx, cam, TILE);
 
   // entities
   sheepMgr.draw(ctx, cam);
