@@ -64,6 +64,7 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
 net.connect(myName);
+const FORCE_HOST = params.get("host") === "1";
 
 // a stable local id until net reports one
 let myId = null;
@@ -268,6 +269,7 @@ function loop(now){
   }
 
   const movingSelf = (held.up || held.down || held.left || held.right);
+
 
   if (isHost) {
     // update host version of me
