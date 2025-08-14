@@ -93,16 +93,27 @@ function nearestPatchInTiles(xPx, yPx, maxTiles){
   return { tx: best.tx, ty: best.ty, distTiles: Math.sqrt(best.d2) };
 }
 
-/* ===== HUD ===== */
+/* ===== HUD (sheep count only, top-right) ===== */
 function drawHUD(){
+  const pad = 12;
+  const label = `Sheep: ${sheepMgr.count}`;
+
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(10, 10, 260, 52);
-  ctx.fillStyle = "#fff";
   ctx.font = "14px system-ui, sans-serif";
-  const movingNow = (held.up||held.down||held.left||held.right) ? "yes" : "no";
-  ctx.fillText(`Sheep: ${sheepMgr.count}  |  Moving: ${movingNow}`, 18, 32);
-  ctx.fillText(`Patches: ${foodPatches.size}`, 18, 50);
+  const textW = ctx.measureText(label).width;
+
+  const boxW = textW + 20;
+  const boxH = 28;
+  const x = ctx.canvas.width - boxW - pad; // top-right
+  const y = pad;
+
+  // backdrop
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(x, y, boxW, boxH);
+
+  // text
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, x + 10, y + 19);
   ctx.restore();
 }
 

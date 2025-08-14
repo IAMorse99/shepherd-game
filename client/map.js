@@ -164,7 +164,7 @@ export function buildMap({ TILE, WORLD }) {
   return { cx, cy, edges, radial, ringAt, mapLayer, worldPx };
 }
 
-/** Extra ambient FX drawn over the visible area only. */
+/** Extra ambient FX drawn over the visible area only (wavy pasture bands). */
 export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
   const x0 = Math.max(0, Math.floor(cam.x / TILE));
   const y0 = Math.max(0, Math.floor(cam.y / TILE));
@@ -196,39 +196,51 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
     }
   }
 
-  /* ---------- PASTURE SHIMMER (faint): dark band + thin light trail ---------- */
-  const speed = 0.00125;             // motion speed (keep)
-  const freqX = 0.40, freqY = 0.28;  // angle (keep consistent)
-  const trailShift = 0.55;           // how far behind the highlight rides
+  /* ---------- PASTURE SHIMMER (wavy): dark band + thin light trail ---------- */
+  const speed = 0.00125;            // motion speed
+  const freqX = 0.40, freqY = 0.28; // base direction
+  const trailShift = 0.55;          // distance between dark band and highlight
 
-  // Dark lead band (fainter)
+  // time scalers for wiggle
+  const t1 = now * 0.0009;
+  const t2 = now * 0.0013;
+  const wiggle = (x, y) =>
+    Math.sin(x*0.10 + y*0.05 + t1) * 0.35 +
+    Math.sin(x*0.07 - y*0.08 - t2) * 0.28 +
+    Math.sin(y*0.06 + t1*0.7)      * 0.18;
+
+  // Dark lead band (faint)
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
       const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
 
-      const k = (x*freqX + y*freqY) - now*speed;
+      const base = (x*freqX + y*freqY) - now*speed;
+      const k = base + wiggle(x, y);
       const wave = Math.sin(k);
+
       if (wave > 0.60) {
         const t = (wave - 0.60) / 0.40;   // 0..1 across crest
-        const a = 0.02 + 0.04*t;          // max 0.06 (faint)
+        const a = 0.02 + 0.04*t;          // max 0.06
         ctx.fillStyle = `rgba(0,0,0,${a})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
     }
   }
 
-  // Thin bright trail (also faint)
+  // Thin bright trail (also wavy, slightly behind)
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
       const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
 
-      const k2 = (x*freqX + y*freqY) - now*speed + trailShift;
+      const base2 = (x*freqX + y*freqY) - now*speed + trailShift;
+      const k2 = base2 + wiggle(x+17, y-23); // offset so it’s not identical
       const wave2 = Math.sin(k2);
+
       if (wave2 > 0.75) {
-        const t2 = (wave2 - 0.75) / 0.25; // thin crest
-        const a2 = 0.025 + 0.045*t2;      // max ~0.07 (faint)
+        const t2c = (wave2 - 0.75) / 0.25; // thin crest
+        const a2 = 0.025 + 0.045*t2c;      // max ~0.07
         ctx.fillStyle = `rgba(255,255,255,${a2})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
