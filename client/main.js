@@ -11,7 +11,7 @@ import {
 import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
 import { buildBridges, toBridgeSet } from "./bridges.js";
-import { createWolvesManager } from "./wolves.js"; // ⬅️ NEW
+import { createWolvesManager } from "./wolves.js";
 
 /* ===== CONFIG ===== */
 const TILE = 20;
@@ -45,7 +45,7 @@ const tileKey = (x,y) => `${x},${y}`;
 /* ===== PLAYER & INPUT ===== */
 const player = createPlayer({ cx: world.cx, edges: world.edges });
 const held = { up:false, down:false, left:false, right:false };
-const keymap = { "ArrowUp":"up","KeyW":"up","ArrowDown":"down","KeyS":"down","ArrowLeft":"left","KeyA":"left","KeyD":"right" };
+const keymap = { "ArrowUp":"up","KeyW":"up","ArrowDown":"down","KeyS":"down","ArrowLeft":"left","KeyA":"left","ArrowRight":"right","KeyD":"right" };
 addEventListener("keydown", e => { const k = keymap[e.code]; if (!k) return; held[k]=true; e.preventDefault(); });
 addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; held[k]=false; e.preventDefault(); });
 
@@ -88,38 +88,37 @@ function nearestPatchInTiles(xPx, yPx, maxTiles){
 function drawHUD(){
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(10, 10, 180, 52);
+  ctx.fillRect(10, 10, 220, 52);
   ctx.fillStyle = "#fff";
   ctx.font = "14px system-ui, sans-serif";
-  ctx.fillText(`Sheep: ${sheepMgr.count}`, 18, 32);
+  const movingNow = (held.up||held.down||held.left||held.right) ? "yes" : "no";
+  ctx.fillText(`Sheep: ${sheepMgr.count}  |  Moving: ${movingNow}`, 18, 32);
   ctx.fillText(`Patches: ${foodPatches.size}`, 18, 50);
   ctx.restore();
 }
 
 /* ===== LOOP ===== */
 let last = performance.now();
-let prevPX = player.x, prevPY = player.y;
 
 function loop(now){
   const dt = now - last; last = now;
 
-  // movement cadence
+  // movement cadence (grid step); player still uses STEP_MS to advance tiles
   player.moveCooldown -= dt;
-  let movedThisTick = false;
   if (player.moveCooldown <= 0) {
     if (tryMove(player, held, { WORLD, ringAt: world.ringAt, bridgeSet })) {
       player.moveCooldown = STEP_MS;
-      movedThisTick = true;
     } else if (!held.up && !held.down && !held.right && !held.left) {
       player.moveCooldown = 0;
     } else {
       player.moveCooldown = STEP_MS;
     }
   }
-  const moving = movedThisTick || (player.x !== prevPX || player.y !== prevPY);
-  prevPX = player.x; prevPY = player.y;
 
-  // update sheep (flocking + food seeking)
+  // 🔑 KEY CHANGE: treat "moving" as "any movement key is held"
+  const moving = (held.up || held.down || held.left || held.right);
+
+  // update sheep (follow + food seeking)
   sheepMgr.update(now, dt, {
     player,
     moving,
