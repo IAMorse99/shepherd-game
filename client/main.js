@@ -69,7 +69,6 @@ wolves.applySnapshotFromServer = function(list){
   this.applySnapshot(arr);
 };
 
-
 /* ===== NET (WS) ===== */
 const params = new URLSearchParams(location.search);
 const myName = params.get("n") || ("Shep_" + Math.random().toString(36).slice(2,6));
@@ -80,7 +79,9 @@ const net = createNetWS({ url: SERVER_WS_URL });
 net.connect(myName);
 
 /* ===== SNAPSHOT STATE FROM SERVER ===== */
-let netPlayers = new Map(); // id -> {id,name,x,y}
+let netPlayers = new Map();       // <-- missing in your file; needed!
+let playerHistory = new Map();    // id -> [{t,x,y}, ...] sorted by t asc
+const INTERP_DELAY_MS = 120;      // render ~120ms behind server time
 let foodPatches = new Set();
 
 net.onSnapshot((snap) => {
@@ -90,9 +91,18 @@ net.onSnapshot((snap) => {
     nextPlayers.set(p.id, p);
     ensureHerd(p.id);
   }
-  netPlayers = nextPlayers;
+  netPlayers = nextPlayers;                                     // :contentReference[oaicite:0]{index=0}
 
-  // figure out my id (first hello sets it; also infer by name match if needed)
+  // record positions into history for interpolation
+  const ts = typeof snap.ts === "number" ? snap.ts : performance.now();
+  for (const p of snap.players) {
+    if (!playerHistory.has(p.id)) playerHistory.set(p.id, []);
+    const hist = playerHistory.get(p.id);
+    hist.push({ t: ts, x: p.x, y: p.y });
+    if (hist.length > 24) hist.splice(0, hist.length - 24);     // keep last ~24 samples
+  }
+
+  // my id from hello
   if (!myId && net.myId) myId = net.myId;
 
   // herds
@@ -102,22 +112,32 @@ net.onSnapshot((snap) => {
   }
 
   // wolves
- if (Array.isArray(snap.wolves)) wolves.applySnapshotFromServer(snap.wolves);
+  if (Array.isArray(snap.wolves)) wolves.applySnapshotFromServer(snap.wolves);
 
   // patches
   foodPatches = new Set(snap.patches);
 
-  // also move my local player to server coords for camera
-  if (myId && netPlayers.has(myId)) {
-    const me = netPlayers.get(myId);
-    player.x = me.x; player.y = me.y;
-  }
+  // (camera will use interpolated pos each frame instead)
 });
 
 /* Send inputs at ~15 fps */
 setInterval(() => {
   net.sendInput(held);
 }, 66);
+
+/* ===== Interpolation helpers ===== */
+function getInterpolatedPos(id, renderTimeMs) {
+  const hist = playerHistory.get(id);
+  if (!hist || hist.length === 0) return null;
+  let a = null, b = null;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (hist[i].t <= renderTimeMs) { a = hist[i]; b = hist[i+1]; break; }
+  }
+  if (!a) return { x: hist[0].x, y: hist[0].y };
+  if (!b) return { x: hist[hist.length - 1].x, y: hist[hist.length - 1].y };
+  const t = (renderTimeMs - a.t) / Math.max(1, (b.t - a.t));
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
 
 /* ===== CAMERA ===== */
 function cameraRect(){
@@ -162,11 +182,20 @@ function drawFoodPatchesFromSet(ctx, cam, TILE, set){
 }
 
 function loop(now){
+  // pick a render time slightly behind the latest server tick for smooth lerp
+  const renderTime = performance.now() - INTERP_DELAY_MS;
+
+  // smooth-follow the camera using my interpolated position
+  if (myId && netPlayers.has(myId)) {
+    const meInterp = getInterpolatedPos(myId, renderTime);
+    if (meInterp) { player.x = meInterp.x; player.y = meInterp.y; }
+  }
+
   const cam = cameraRect();
 
   // world + FX
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
-  drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
+  drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });     // :contentReference[oaicite:1]{index=1}
 
   // bridges + patches from server
   drawBridges(ctx, cam, TILE, bridgeTiles);
@@ -179,8 +208,11 @@ function loop(now){
   for (const [pid, mgr] of herds) { if (pid !== myId) mgr.draw(ctx, cam); }
   if (myId && herds.get(myId)) herds.get(myId).draw(ctx, cam);
 
-  // players
-  for (const [, p] of netPlayers) { drawPlayer(ctx, { x:p.x, y:p.y }, TILE, cam); }
+  // players (draw everyone at interpolated positions)
+  for (const [, p] of netPlayers) {
+    const interp = getInterpolatedPos(p.id, renderTime) || p;
+    drawPlayer(ctx, { x: interp.x, y: interp.y }, TILE, cam);
+  }
 
   // UI
   drawMinimap(ctx, world.mapLayer, cam, player, { TILE, WORLD, worldPx: world.worldPx, MINIMAP });

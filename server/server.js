@@ -9,13 +9,17 @@ import { WebSocketServer } from "ws";
 const TILE    = 20;
 const WORLD   = 200;
 const STEP_MS = 90;            // movement cadence
-const TICK_MS = 100;           // server sim step (~10 fps)
-const SNAP_MS = 100;           // snapshot rate (same as tick for now)
 
 const cx = Math.floor(WORLD/2);
 const cy = Math.floor(WORLD/2);
 const maxR = Math.min(cx, cy) - 1;
-const PLAYER_SPEED_TPS = 6.5;
+// raise server update cadence a bit
+const TICK_MS = 66;   // was 100
+const SNAP_MS = 66;   // match tick so we snapshot every step
+
+// make player faster (tiles per second)
+const PLAYER_SPEED_TPS = 8.5; // was 6.5 or less; tune to taste
+
 
 
 let rPasture = Math.floor(maxR * 0.45);
@@ -448,6 +452,7 @@ setInterval(() => {
 
     broadcast({
       type: "snapshot",
+        ts: now, 
       players: playersSnap,
       herds: herdsSnap,
       wolves: wolvesSnap,
