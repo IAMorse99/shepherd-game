@@ -12,10 +12,10 @@ export function createSheepManager(env) {
   const { TILE, WORLD, edges, radial } = env;
 
   // -------- Tunables (feel free to tweak) --------
-  const MAX_SPEED       = TILE * 10;     // px/s cap
+  const MAX_SPEED       = TILE * 15;     // px/s cap
   const MAX_FORCE       = TILE * 30;     // px/s^2 steering cap
   const VIEW_RADIUS     = TILE * 5;      // neighbor awareness radius (px)
-  const SEP_RADIUS      = TILE * 2.0;    // separation radius (px)
+  const SEP_RADIUS      = TILE * 5.0;    // separation radius (px)
   const ALIGN_RADIUS    = TILE * 4.0;    // alignment radius (px)
   const COHESION_RADIUS = TILE * 8.0;    // cohesion "feels" player up to this
 
