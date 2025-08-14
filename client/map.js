@@ -37,12 +37,24 @@ export function buildMap({ TILE, WORLD }) {
     return "dark";
   }
 
+  // Base palette
   const COLORS = {
-    pasture: "#7ccf4f",
-    water:   "#4aa7c9",
-    glen:    "#4c8b41",
-    dark:    "#234020"
+    pastureBase1: "#76c94a",
+    pastureBase2: "#84d454",
+    pastureShade: "rgba(0,0,0,0.10)",
+    water:        "#4aa7c9",
+    glen:         "#4c8b41",
+    dark:         "#234020",
+    grid:         "rgba(0,0,0,0.18)"
   };
+
+  // tiny deterministic noise
+  function h2i(x, y) {
+    let h = (x * 374761393 + y * 668265263) ^ 0x9e3779b9;
+    h ^= h >>> 13; h = (h * 1274126177) >>> 0;
+    return h;
+  }
+  function r01(x, y, s=1) { return ((h2i(x*s, y*s) % 1000) / 1000); }
 
   // prerender to an offscreen canvas
   const worldPx = WORLD * TILE;
@@ -51,18 +63,95 @@ export function buildMap({ TILE, WORLD }) {
   const mctx = mapLayer.getContext("2d");
   mctx.imageSmoothingEnabled = false;
 
+  // helper: lerp colors
+  function lerp(a, b, t) {
+    const A = hexToRgb(a), B = hexToRgb(b);
+    const r = Math.round(A.r + (B.r - A.r) * t);
+    const g = Math.round(A.g + (B.g - A.g) * t);
+    const bC = Math.round(A.b + (B.b - A.b) * t);
+    return `rgb(${r},${g},${bC})`;
+  }
+  function hexToRgb(hex) {
+    const s = hex.replace("#", "");
+    const n = parseInt(s.length === 3 ? s.split("").map(c=>c+c).join("") : s, 16);
+    return { r: (n>>16)&255, g: (n>>8)&255, b: n&255 };
+  }
+
+  // draw rings with nicer pasture
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       const ring = ringAt(x, y);
-      mctx.fillStyle = COLORS[ring];
+
+      // BASE fill
+      if (ring === "pasture") {
+        // gentle radial brightening toward water edge
+        const r = radial(x, y);
+        const tRad = Math.max(0, Math.min(1, (r - edges.glen) / (edges.pasture - edges.glen)));
+        // micro‑variation
+        const n = r01(x, y) * 0.35 + r01(x+23, y-17, 3) * 0.65;
+        const mix = Math.min(1, Math.max(0, 0.25 + tRad*0.45 + (n-0.5)*0.25));
+        mctx.fillStyle = lerp(COLORS.pastureBase1, COLORS.pastureBase2, mix);
+      } else if (ring === "water") {
+        mctx.fillStyle = COLORS.water;
+      } else if (ring === "glen") {
+        mctx.fillStyle = COLORS.glen;
+      } else {
+        mctx.fillStyle = COLORS.dark;
+      }
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
 
-      // tiny variation
-      const n = (Math.sin((x*97 + y*57)) + 1) * 0.08;
-      mctx.fillStyle = `rgba(0,0,0,${n})`;
+      // subtle shading texture everywhere for depth
+      const n2 = (Math.sin((x*97 + y*57)) + 1) * 0.06;
+      mctx.fillStyle = `rgba(0,0,0,${n2})`;
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
     }
   }
+
+  // Pasture details: grass tufts, flowers, dirt flecks near water
+  for (let y = 0; y < WORLD; y++) {
+    for (let x = 0; x < WORLD; x++) {
+      if (ringAt(x,y) !== "pasture") continue;
+      const sx = x*TILE, sy = y*TILE;
+
+      const n = r01(x, y, 2);
+
+      // grass tufts (thin short strokes)
+      if (n > 0.35 && n < 0.80) {
+        mctx.save();
+        mctx.translate(sx, sy);
+        mctx.strokeStyle = "rgba(20,60,20,0.45)";
+        mctx.lineWidth = 1;
+        const count = 1 + Math.floor(n * 2);
+        for (let i = 0; i < count; i++) {
+          const rx = 3 + (r01(x+i, y-i, 5) * (TILE-6));
+          const ry = 3 + (r01(x-i, y+i, 5) * (TILE-6));
+          const len = 2 + Math.floor(r01(x+17*i, y-13*i, 7) * 3);
+          mctx.beginPath();
+          mctx.moveTo(rx, ry + len);
+          mctx.lineTo(rx + (r01(x*i, y*i, 11)-0.5)*2, ry);
+          mctx.stroke();
+        }
+        mctx.restore();
+      }
+
+      // rare wildflowers
+      if (n > 0.86) {
+        const c = (n > 0.95) ? "#ffd1e3" : (n > 0.90 ? "#fff8a8" : "#d6ffd3");
+        const px = sx + 4 + Math.floor(r01(x+99, y+11, 9) * (TILE-8));
+        const py = sy + 4 + Math.floor(r01(x-51, y-7, 9) * (TILE-8));
+        mctx.fillStyle = c;
+        mctx.beginPath(); mctx.arc(px, py, 1.5, 0, Math.PI*2); mctx.fill();
+      }
+
+      // faint dirt flecks closer to water edge
+      const r = radial(x, y);
+      if (r > edges.glen && r < edges.pasture && r01(x-3,y+7,4) > 0.92) {
+        mctx.fillStyle = "rgba(120,90,50,0.18)";
+        mctx.fillRect(sx + 6, sy + 6, 3, 3);
+      }
+    }
+  }
+
   // darker, less‑welcoming center
   const centerRadius = Math.max(0, (edges.dark+1) * TILE);
   if (centerRadius > 0) {
@@ -71,8 +160,9 @@ export function buildMap({ TILE, WORLD }) {
     mctx.arc(cx*TILE, cy*TILE, centerRadius, 0, Math.PI*2);
     mctx.fill();
   }
-  // grid overlay
-  mctx.strokeStyle = "rgba(0,0,0,0.18)";
+
+  // grid overlay (keep it subtle)
+  mctx.strokeStyle = COLORS.grid;
   mctx.lineWidth = 1;
   for (let y = 0; y <= WORLD; y++) {
     mctx.beginPath(); mctx.moveTo(0, y*TILE + 0.5); mctx.lineTo(worldPx, y*TILE + 0.5); mctx.stroke();
@@ -113,6 +203,21 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
       const a = 0.05 + 0.05*Math.max(0, p);
       ctx.fillStyle = `rgba(255,255,255,${a})`;
       ctx.fillRect(sx, sy, TILE, TILE);
+    }
+  }
+
+  // NEW: pasture wind sweep (very subtle moving brightness)
+  for (let y=y0; y<=y1; y++){
+    for (let x=x0; x<=x1; x++){
+      if (ringAt(x,y) !== "pasture") continue;
+      const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
+      // diagonal wave moving over time
+      const wave = Math.sin((x*0.35 + y*0.25) + now*0.0012);
+      if (wave > 0.55) {
+        const a = (wave - 0.55) * 0.06; // max ~0.027
+        ctx.fillStyle = `rgba(255,255,255,${a})`;
+        ctx.fillRect(sx, sy, TILE, TILE);
+      }
     }
   }
 
