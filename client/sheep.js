@@ -3,51 +3,38 @@
 import { Sprites, drawSpriteCentered } from "./sprites.js";
 
 /**
- * Sheep manager — shares EXACT boundary with player:
- * - Follow player with personal offsets (no rim shrink)
- * - If idle & hungry: seek nearest food within a small radius
- * - Smooth velocity + separation
- * - Sprite render + hunger ring
- * - Clamp uses the SAME tile-space circle as player (edges.pasture + 0.2)
+ * Sheep manager — NO map bounds. Sheep are only constrained to stay
+ * within a radius of the PLAYER (a moving “herd circle”).
+ *
+ * Behavior:
+ * - When movement keys are held: follow player with a small personal offset.
+ * - When idle & hungry: seek the nearest food patch within a few tiles.
+ * - Otherwise: stay put (no random wandering).
+ * - Smooth velocity + light separation so they don’t stack.
+ * - Sprites with a simple hunger ring.
  */
 export function createSheepManager(env) {
-  const { TILE, WORLD, edges, radial } = env;
+  const { TILE, WORLD } = env; // edges/radial not needed anymore
 
   /* ===== Tunables ===== */
-  const FOLLOW_SPEED   = TILE * 14.0;  // keep up with player
+  const HERD_RADIUS_TILES = 10;             // how far sheep may stray from player
+  const HERD_RADIUS_PX    = HERD_RADIUS_TILES * TILE;
+
+  const FOLLOW_SPEED   = TILE * 14.0;       // keep up with player
   const SEEK_SPEED     = TILE * 13.0;
-  const BLEND_RATE_S   = 9.0;          // velocity smoothing
+  const BLEND_RATE_S   = 9.0;               // velocity smoothing
   const STOP_DECAY_S   = 7.0;
 
-  const OFFSET_RADIUS  = TILE * 1.2;   // personal offset radius
-  const SEP_RADIUS     = TILE * 1.0;   // separation distance
-  const SEP_PUSH       = TILE * 60;    // separation strength
+  const OFFSET_RADIUS  = TILE * 1.2;        // personal offset radius
+  const SEP_RADIUS     = TILE * 1.0;        // separation distance
+  const SEP_PUSH       = TILE * 60;         // separation strength
 
-  const SEEK_TILES     = 5;            // how far to look for food (in tiles)
+  const SEEK_TILES     = 5;                 // how far to look for food (in tiles)
 
   const MEALS_TO_BREED    = 3;
   const BREED_COOLDOWN_MS = 8000;
 
   const sheep = []; // {x,y,vx,vy,phase,full,cd,ox,oy}
-
-  /* ===== Boundary — EXACT match with player ===== */
-  const cx = Math.floor(WORLD/2);
-  const cy = Math.floor(WORLD/2);
-  const LIMIT_TILES = edges.pasture + 0.2; // player uses this
-
-  // Clamp a pixel point using the same tile-space circle as player
-  function clampToPasturePx(xPx, yPx) {
-    const xT = xPx / TILE;
-    const yT = yPx / TILE;
-    const dx = xT - cx + 0.5;
-    const dy = yT - cy + 0.5;
-    const d  = Math.hypot(dx, dy);
-    if (d <= LIMIT_TILES || d < 1e-6) return { x: xPx, y: yPx };
-    const s = LIMIT_TILES / d;
-    const clampedXT = (cx - 0.5) + dx * s;
-    const clampedYT = (cy - 0.5) + dy * s;
-    return { x: clampedXT * TILE, y: clampedYT * TILE };
-  }
 
   /* ===== Math helpers ===== */
   const lerp = (a,b,t)=> a + (b-a)*t;
@@ -59,6 +46,20 @@ export function createSheepManager(env) {
     return { vx: vx * s, vy: vy * s };
   }
 
+  // Keep a point within herd circle around (px,py)
+  function clampToHerd(x, y, px, py) {
+    const dx = x - px, dy = y - py;
+    const d  = Math.hypot(dx, dy);
+    if (d <= HERD_RADIUS_PX || d < 1e-6) return { x, y };
+    const s = HERD_RADIUS_PX / d;
+    return { x: px + dx * s, y: py + dy * s };
+  }
+
+  // Clamp a TARGET point into herd circle (prevents “unreachable” targets)
+  function clampTargetToHerd(tx, ty, px, py) {
+    return clampToHerd(tx, ty, px, py);
+  }
+
   /* ===== API ===== */
   function addSheep(n, player) {
     const px = player.x * TILE + TILE / 2;
@@ -68,7 +69,7 @@ export function createSheepManager(env) {
       const r   = OFFSET_RADIUS * (0.6 + Math.random() * 0.8);
       const ox  = Math.cos(ang) * r;
       const oy  = Math.sin(ang) * r;
-      const spawn = clampToPasturePx(px + ox, py + oy);
+      const spawn = clampToHerd(px + ox, py + oy, px, py);
       sheep.push({
         x: spawn.x, y: spawn.y,
         vx: 0, vy: 0,
@@ -115,24 +116,26 @@ export function createSheepManager(env) {
       let dvx = 0, dvy = 0;
 
       if (moving) {
-        // follow target = player + personal offset (no rim shrink)
+        // follow target = player + personal offset (clamped to herd circle)
         let tx = px + s.ox, ty = py + s.oy;
-        ({ x: tx, y: ty } = clampToPasturePx(tx, ty)); // clamp TARGET to same circle
+        ({ x: tx, y: ty } = clampTargetToHerd(tx, ty, px, py));
         const toT = normTo(tx - s.x, ty - s.y, FOLLOW_SPEED);
         dvx = toT.vx; dvy = toT.vy;
 
       } else if (s.full < MEALS_TO_BREED && typeof seekFood === "function") {
+        // seek food only if within a few tiles
         const found = seekFood(s.x, s.y, SEEK_TILES);
         if (found) {
           let fx = found.tx * TILE + TILE/2;
           let fy = found.ty * TILE + TILE/2;
-          ({ x: fx, y: fy } = clampToPasturePx(fx, fy)); // clamp food target too
+          ({ x: fx, y: fy } = clampTargetToHerd(fx, fy, px, py)); // keep goal inside herd circle
           const toF = normTo(fx - s.x, fy - s.y, SEEK_SPEED);
           dvx = toF.vx; dvy = toF.vy;
         }
       }
+      // else: no target → stand still (unless separation pushes a bit)
 
-      // simple separation
+      // separation (light)
       for (let j = 0; j < sheep.length; j++) {
         if (j === i) continue;
         const o = sheep[j];
@@ -158,8 +161,8 @@ export function createSheepManager(env) {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
 
-      // final safety clamp — SAME circle as player
-      ({ x: s.x, y: s.y } = clampToPasturePx(s.x, s.y));
+      // final clamp to the HERD circle (only player-relative)
+      ({ x: s.x, y: s.y } = clampToHerd(s.x, s.y, px, py));
 
       s.phase += dt * 0.9;
     }
