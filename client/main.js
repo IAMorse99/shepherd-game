@@ -59,8 +59,8 @@ addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; hel
 const params = new URLSearchParams(location.search);
 const myName = params.get("n") || ("Shep_" + Math.random().toString(36).slice(2,6));
 
-const SUPABASE_URL  = "https://YOUR-PROJECT.supabase.co";   // <-- paste yours
-const SUPABASE_ANON = "YOUR-ANON-PUBLIC-KEY";               // <-- paste yours
+const SUPABASE_URL  = "https://keyrkzjqxhzhznltsjmp.supabase.co";   // <-- paste yours
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtleXJrempxeGh6aHpubHRzam1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNDM3MzksImV4cCI6MjA3MDcxOTczOX0.02TM31EamVlKzYVYaWQLysuVHL36H3ng5_d90mT8sIk";               // <-- paste yours
 
 const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
 net.connect(myName);
