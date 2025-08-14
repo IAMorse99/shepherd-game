@@ -38,10 +38,10 @@ export function buildMap({ TILE, WORLD }) {
     return "dark";
   }
 
-  // Palette (pasture simplified, less speckle)
+  // Palette
   const COLORS = {
-    pasture1: "#76c94a",
-    pasture2: "#8ada57",
+    pasture1: "#77c94b",
+    pasture2: "#8edd5b",
     water:    "#4aa7c9",
     glen:     "#4c8b41",
     dark:     "#234020",
@@ -77,16 +77,17 @@ export function buildMap({ TILE, WORLD }) {
   const mctx = mapLayer.getContext("2d");
   mctx.imageSmoothingEnabled = false;
 
-  /* ---------- BASE TILES (very light texture only) ---------- */
+  /* ---------- BASE TILES (clean + gentle tone drift) ---------- */
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       const ring = ringAt(x, y);
+
       if (ring === "pasture") {
         // smooth two‑tone gradient with slight radial bias (toward water edge)
         const r = radial(x, y);
         const tRad = Math.max(0, Math.min(1, (r - edges.glen) / Math.max(1, (edges.pasture - edges.glen))));
-        const micro = r01(x, y, 2) * 0.15 + r01(x+11, y-7, 5) * 0.25; // small tonal drift
-        const mix = Math.min(1, Math.max(0, 0.30 + tRad*0.40 + (micro-0.2)*0.20));
+        const micro = r01(x, y, 2) * 0.1 + r01(x+11, y-7, 5) * 0.2; // small tonal drift
+        const mix = Math.min(1, Math.max(0, 0.30 + tRad*0.40 + (micro-0.15)*0.20));
         mctx.fillStyle = lerpC(COLORS.pasture1, COLORS.pasture2, mix);
       } else if (ring === "water") {
         mctx.fillStyle = COLORS.water;
@@ -97,41 +98,30 @@ export function buildMap({ TILE, WORLD }) {
       }
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
 
-      // faint depth (way less than before)
-      const n2 = (Math.sin((x*71 + y*53)) + 1) * 0.04;
+      // faint depth everywhere (very subtle)
+      const n2 = (Math.sin((x*71 + y*53)) + 1) * 0.03;
       mctx.fillStyle = `rgba(0,0,0,${n2})`;
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
     }
   }
 
-  /* ---------- BIGGER, SPARSER PASTURE FEATURES ---------- */
-  // • broad grass clumps (soft shapes), rare wildflowers
+  /* ---------- PASTURE SPECKLES (brought back, sparse & tiny) ---------- */
+  // Tiny dots—low density so it doesn't get busy.
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       if (ringAt(x,y) !== "pasture") continue;
-      const sx = x*TILE, sy = y*TILE;
       const n = r01(x, y, 3);
-
-      // broad clumps: low frequency, semi‑transparent overlays
-      if (n > 0.70 && n < 0.92) {
-        const t = (n - 0.70) / 0.22; // 0..1
-        const w = TILE * (0.9 + t * 0.6);
-        const h = TILE * (0.7 + t * 0.4);
-        const px = sx + (TILE - w)*0.5 + (r01(x+5, y-4, 7)-0.5)*2;
-        const py = sy + (TILE - h)*0.5 + (r01(x-6, y+9, 7)-0.5)*2;
-        mctx.fillStyle = `rgba(40, 90, 30, ${0.10 + t*0.08})`;
-        mctx.beginPath(); mctx.ellipse(px + w*0.5, py + h*0.55, w*0.48, h*0.36, (n*6)|0, 0, Math.PI*2);
-        mctx.fill();
-      }
-
-      // rare, larger flowers (no confetti)
-      if (n > 0.965) {
-        const px = sx + 5 + Math.floor(r01(x+99, y+11, 9) * (TILE-10));
-        const py = sy + 5 + Math.floor(r01(x-51, y-7, 9) * (TILE-10));
-        mctx.fillStyle = (n > 0.985) ? "#fff3a8" : "#ffd1e3";
-        mctx.beginPath(); mctx.arc(px, py, 2.2, 0, Math.PI*2); mctx.fill();
-        mctx.fillStyle = "rgba(0,0,0,0.25)";
-        mctx.beginPath(); mctx.arc(px, py, 0.9, 0, Math.PI*2); mctx.fill();
+      if (n > 0.94) { // ~6% of tiles get a speckle
+        const sx = x*TILE, sy = y*TILE;
+        const px = sx + 4 + Math.floor(r01(x+99, y+11, 9) * (TILE-8));
+        const py = sy + 4 + Math.floor(r01(x-51, y-7, 9) * (TILE-8));
+        const a  = 0.25 + (n-0.94)*0.9; // 0.25..0.79
+        mctx.fillStyle = `rgba(30,70,30,${a})`;
+        mctx.fillRect(px, py, 1, 1);
+        if (n > 0.985) {
+          // occasional two-pixel speckle for variety
+          mctx.fillRect(px+1, py, 1, 1);
+        }
       }
     }
   }
@@ -145,7 +135,7 @@ export function buildMap({ TILE, WORLD }) {
     mctx.fill();
   }
 
-  /* ---------- grid overlay (unchanged) ---------- */
+  /* ---------- grid overlay ---------- */
   mctx.strokeStyle = COLORS.grid;
   mctx.lineWidth = 1;
   for (let y = 0; y <= WORLD; y++) {
@@ -190,32 +180,44 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
     }
   }
 
-  /* ---------- NEW: pasture wind bands (clearer animation) ---------- */
-  // band 1: wide, slow, brightening sweep
+  /* ---------- PASTURE SHIMMER: dark band + thin light highlight trailing ---------- */
+  // Angle & motion tuned to “read” like wind sweep, same direction for both bands.
+  // Band A (dark lead)
+  const speed = 0.00125;    // motion speed
+  const freqX = 0.40, freqY = 0.28; // angle
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
       const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
 
-      // diagonal band moving over time
-      const k = (x*0.36 + y*0.28) - now*0.0011; // phase
-      const w = 1.2; // band "width" factor
-      const band = Math.sin(k);
-      if (band > 0.40) {
-        // map [0.40..1] to [0..1] then scale alpha
-        const t = (band - 0.40) / (1 - 0.40);
-        const a = 0.05 + 0.08*t; // brighter than before, still soft
-        ctx.fillStyle = `rgba(255,255,255,${a})`;
+      const k = (x*freqX + y*freqY) - now*speed;
+      const wave = Math.sin(k);
+
+      // DARK lead band: fairly narrow, clearly visible
+      if (wave > 0.60) {
+        const t = (wave - 0.60) / 0.40; // 0..1 across crest
+        const a = 0.05 + 0.10*t;        // up to 0.15 darkness
+        ctx.fillStyle = `rgba(0,0,0,${a})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
+    }
+  }
 
-      // band 2: fainter counter-phase shadow band for depth
-      const k2 = (x*0.34 - y*0.22) + now*0.0009;
-      const band2 = Math.sin(k2);
-      if (band2 > 0.55) {
-        const t2 = (band2 - 0.55) / (1 - 0.55);
-        const a2 = 0.02 + 0.05*t2;
-        ctx.fillStyle = `rgba(0,0,0,${a2})`;
+  // Band B (light trail), same direction, slightly behind = phase‑shift
+  const trailShift = 0.6; // smaller = closer to the dark band
+  for (let y=y0; y<=y1; y++){
+    for (let x=x0; x<=x1; x++){
+      if (ringAt(x,y) !== "pasture") continue;
+      const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
+
+      const k2 = (x*freqX + y*freqY) - now*speed + trailShift;
+      const wave2 = Math.sin(k2);
+
+      // LIGHT trailing highlight: thinner & brighter ridge
+      if (wave2 > 0.75) {
+        const t2 = (wave2 - 0.75) / 0.25; // thin crest
+        const a2 = 0.06 + 0.11*t2;        // up to ~0.17
+        ctx.fillStyle = `rgba(255,255,255,${a2})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
     }
