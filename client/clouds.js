@@ -19,7 +19,7 @@ export function createClouds({
   speedRange = [12, 28],   // px/s
   scaleRange = [0.9, 1.7],
   alphaRange = [0.12, 0.22],
-  parallax = 0.8           // 0..1; 0 = stuck to camera, 1 = world-tied
+  parallax = 0.99           // 0..1; 0 = stuck to camera, 1 = world-tied
 } = {}) {
   const sprs = images.map(load);
 
