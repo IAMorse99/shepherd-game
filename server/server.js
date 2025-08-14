@@ -411,7 +411,8 @@ setInterval(() => {
     }
 
     // keep wolves snapshot as [x,y] pairs so the client code stays unchanged
-    const wolvesSnap = wolves.map(w => [Math.round(w.x), Math.round(w.y)]);
+    const wolvesSnap = wolves.map(w => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+
 
     broadcast({
       type: "snapshot",
