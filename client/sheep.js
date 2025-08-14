@@ -10,13 +10,13 @@ import { Sprites, drawSpriteCentered } from "./sprites.js";
  * - Smooth velocity blending
  * - Draws sprite if available, else circles
  * - ALWAYS shows hunger ring
- * - Edge-safe: follow target is clamped inside pasture so sheep don't lock on rim
+ * - Edge-safe in PIXELS (no tile radial mismatch)
  */
 export function createSheepManager(env) {
-  const { TILE, WORLD, edges, radial } = env;
+  const { TILE, WORLD, edges } = env; // ⬅️ we won't use radial() anymore
 
   /* ===== Tunables ===== */
-  const FOLLOW_SPEED   = TILE * 14.0;  // faster than player to catch up
+  const FOLLOW_SPEED   = TILE * 14.0;
   const SEEK_SPEED     = TILE * 13.0;
   const BLEND_RATE_S   = 9.0;
   const STOP_DECAY_S   = 7.0;
@@ -32,12 +32,13 @@ export function createSheepManager(env) {
 
   const sheep = []; // {x,y,vx,vy,phase,full,cd,ox,oy}
 
-  /* ===== Helpers ===== */
+  /* ===== Helpers (all pixel-based) ===== */
   const CX = Math.floor(WORLD/2) * TILE + TILE/2;
   const CY = Math.floor(WORLD/2) * TILE + TILE/2;
 
-  // Use a slightly smaller radius than the absolute edge to avoid oscillation at the rim.
-  const SAFE_RADIUS_PX = (edges.pasture - 0.25) * TILE; // inset a hair
+  // Pixel radii (outer ring in px, with a small inset to avoid jitter on the rim)
+  const PASTURE_RADIUS_PX = edges.pasture * TILE;
+  const SAFE_RADIUS_PX    = PASTURE_RADIUS_PX - TILE * 0.35;
 
   function clampPointToCircle(x, y, cx, cy, r){
     const dx = x - cx, dy = y - cy;
@@ -47,10 +48,14 @@ export function createSheepManager(env) {
     return { x: cx + dx * s, y: cy + dy * s };
   }
 
+  function insidePasturePx(x, y, padPx = 0){
+    const dx = x - CX, dy = y - CY;
+    return (dx*dx + dy*dy) <= (PASTURE_RADIUS_PX - padPx)**2;
+  }
+
   function clampToPasture(x, y) {
-    // keep inside the outer ring (safe pasture)
-    const rTiles = radial(x / TILE, y / TILE);
-    if (rTiles <= edges.pasture + 0.2) return { x, y };
+    // ✅ Pixel-space check (no tile radial())
+    if (insidePasturePx(x, y, TILE * 0.1)) return { x, y };
     return clampPointToCircle(x, y, CX, CY, SAFE_RADIUS_PX);
   }
 
@@ -65,14 +70,10 @@ export function createSheepManager(env) {
 
   // When the player hugs the rim, shrink offsets so targets stay inside.
   function shrinkedOffset(px, py, ox, oy){
-    const dx = px + ox - CX;
-    const dy = py + oy - CY;
-    const d  = Math.hypot(dx, dy);
-    if (d <= SAFE_RADIUS_PX - TILE*0.2) return { ox, oy };
-    // compute how much room is left and scale offset down
-    const room = Math.max(0, SAFE_RADIUS_PX - Math.hypot(px - CX, py - CY) - TILE*0.2);
-    const want = Math.hypot(ox, oy) || 1;
-    const scale = Math.min(1, room / want);
+    const dstPlayer = Math.hypot(px - CX, py - CY);
+    const room      = Math.max(0, SAFE_RADIUS_PX - dstPlayer - TILE*0.2);
+    const want      = Math.hypot(ox, oy) || 1;
+    const scale     = Math.min(1, room / want);
     return { ox: ox * scale, oy: oy * scale };
   }
 
@@ -171,7 +172,7 @@ export function createSheepManager(env) {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
 
-      // final safety clamp
+      // final safety clamp in PIXELS
       const c = clampToPasture(s.x, s.y);
       s.x = c.x; s.y = c.y;
 
