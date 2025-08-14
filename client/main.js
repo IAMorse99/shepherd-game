@@ -65,6 +65,25 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
 net.connect(myName);
 
+// ---- Net compatibility shims (works with or without specific methods) ----
+function onSheep(handler){
+  if (!net) return;                                  // offline
+  if (typeof onSheep === "function") {
+    onSheep(handler);                            // preferred
+  } else if (typeof net.onBroadcast === "function") {
+    net.onBroadcast("sheep", handler);               // generic
+  } // else: no-op (followers won’t get snapshots yet)
+}
+
+function sendSheepSnapshot(payload){
+  if (!net) return;                                  // offline
+  if (typeof sendSheepSnapshot === "function") {
+    sendSheepSnapshot(payload);                  // preferred
+  } else if (typeof net.broadcast === "function") {
+    net.broadcast("sheep", payload);                 // generic
+  } // else: no-op
+}
+
 /* Track players (tile coords) */
 const players = new Map(); // id -> { id, name, x, y, prevX, prevY }
 let myId = null;
@@ -125,7 +144,7 @@ function applyHerdSnapshot(mgr, snap, leaderFallbackPlayer){
 }
 
 /* Followers apply host snapshots */
-net.onSheep((payload) => {
+onSheep((payload) => {
   if (isHost) return; // host ignores
   if (payload?.herds && typeof payload.herds === "object") {
     for (const pid in payload.herds) {
@@ -277,7 +296,7 @@ function loop(now){
       for (const [pid, mgr] of herds) herdsSnap[pid] = serializeHerd(mgr);
       const patches = [...foodPatches];
       const wolfSnap = (wolves.serialize ? wolves.serialize() : []);
-      net.sendSheepSnapshot({ herds: herdsSnap, patches, wolves: wolfSnap });
+      sendSheepSnapshot({ herds: herdsSnap, patches, wolves: wolfSnap });
       lastWorldSend = now;
     }
   } else {
