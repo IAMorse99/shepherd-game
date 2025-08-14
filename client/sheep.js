@@ -45,69 +45,70 @@ export function createSheepManager(env) {
   }
 
   function update(now, dtMs, { player, moving }) {
-    const dt = Math.max(0.001, dtMs / 1000); // seconds
+  const dt = Math.max(0.001, dtMs / 1000); // seconds
 
-    // leader position in pixels
-    let leadX = player.x * TILE + TILE / 2;
-    let leadY = player.y * TILE + TILE / 2;
+  // leader position in pixels (player by default)
+  const playerLeadX = player.x * TILE + TILE / 2;
+  const playerLeadY = player.y * TILE + TILE / 2;
 
-    for (let i = 0; i < sheep.length; i++) {
-      const s = sheep[i];
-      // leader for this sheep = player (first) or previous sheep
-      if (i > 0) {
-        const p = sheep[i - 1];
-        leadX = p.x; leadY = p.y;
+  for (let i = 0; i < sheep.length; i++) {
+    const s = sheep[i];
+
+    // leader for this sheep = player (first) or previous sheep
+    const leadX = (i === 0) ? playerLeadX : sheep[i - 1].x;
+    const leadY = (i === 0) ? playerLeadY : sheep[i - 1].y;
+
+    // how far am I from my leader?
+    const dxL = leadX - s.x, dyL = leadY - s.y;
+    const distL = Math.hypot(dxL, dyL);
+
+    // follow if player is moving OR I'm too far from my ideal spot
+    const NEED_FOLLOW = moving || distL > DESIRED * 1.15;
+
+    if (NEED_FOLLOW) {
+      // target point DESIRED behind the leader along the segment
+      const targetX = (distL > 1e-6) ? (leadX - (dxL / distL) * DESIRED) : s.x;
+      const targetY = (distL > 1e-6) ? (leadY - (dyL / distL) * DESIRED) : s.y;
+      const tx = targetX - s.x, ty = targetY - s.y;
+      const tdist = Math.hypot(tx, ty);
+      const maxStep = MAX_SPEED * dt;
+      const step = Math.min(maxStep, tdist);
+      if (tdist > 1e-6) { s.x += (tx / tdist) * step; s.y += (ty / tdist) * step; }
+      s.idle = false;
+    } else {
+      // mosey gently around a base point near where I am now
+      if (!s.idle) {
+        s.idle = true;
+        s.baseX = s.x; s.baseY = s.y;
+        s.phase = Math.random() * Math.PI * 2;
       }
-
-      if (moving) {
-        // follow the leader, keep distance DESIRED
-        const dx = leadX - s.x, dy = leadY - s.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > 1e-6) {
-          // desired point DESIRED behind the leader along the segment
-          const targetX = leadX - (dx / dist) * DESIRED;
-          const targetY = leadY - (dy / dist) * DESIRED;
-          const tx = targetX - s.x, ty = targetY - s.y;
-          const tdist = Math.hypot(tx, ty);
-          const maxStep = MAX_SPEED * dt;
-          const step = Math.min(maxStep, tdist);
-          if (tdist > 1e-6) { s.x += (tx / tdist) * step; s.y += (ty / tdist) * step; }
-        }
-        s.idle = false;
-      } else {
-        // mosey gently around a base point
-        if (!s.idle) {
-          s.idle = true;
-          s.baseX = s.x; s.baseY = s.y;
-          s.phase = Math.random() * Math.PI * 2;
-        }
-        s.phase += dt * 0.6; // slow orbit
-        const r = IDLE_RADIUS * (0.6 + 0.4 * Math.sin(now * 0.001 + i));
-        const targetX = s.baseX + Math.cos(s.phase) * r * 0.35;
-        const targetY = s.baseY + Math.sin(s.phase * 0.9) * r * 0.25;
-        const tx = targetX - s.x, ty = targetY - s.y;
-        const tdist = Math.hypot(tx, ty);
-        const step = Math.min(IDLE_SPEED * dt, tdist);
-        if (tdist > 1e-6) { s.x += (tx / tdist) * step; s.y += (ty / tdist) * step; }
-      }
-
-      // simple separation so they don’t stack
-      if (i > 0) {
-        const prev = sheep[i - 1];
-        const dx = s.x - prev.x, dy = s.y - prev.y;
-        const d = Math.hypot(dx, dy);
-        if (d < SEPARATION && d > 1e-6) {
-          const push = (SEPARATION - d) * 0.5;
-          s.x += (dx / d) * push;
-          s.y += (dy / d) * push;
-        }
-      }
-
-      // keep inside pasture
-      const c = clampToPasture(s.x, s.y);
-      s.x = c.x; s.y = c.y;
+      s.phase += dt * 0.6;
+      const r = IDLE_RADIUS * (0.6 + 0.4 * Math.sin(now * 0.001 + i));
+      const targetX = s.baseX + Math.cos(s.phase) * r * 0.35;
+      const targetY = s.baseY + Math.sin(s.phase * 0.9) * r * 0.25;
+      const tx = targetX - s.x, ty = targetY - s.y;
+      const tdist = Math.hypot(tx, ty);
+      const step = Math.min(IDLE_SPEED * dt, tdist);
+      if (tdist > 1e-6) { s.x += (tx / tdist) * step; s.y += (ty / tdist) * step; }
     }
+
+    // simple separation so they don’t stack
+    if (i > 0) {
+      const prev = sheep[i - 1];
+      const dx = s.x - prev.x, dy = s.y - prev.y;
+      const d = Math.hypot(dx, dy);
+      if (d < SEPARATION && d > 1e-6) {
+        const push = (SEPARATION - d) * 0.5;
+        s.x += (dx / d) * push;
+        s.y += (dy / d) * push;
+      }
+    }
+
+    // keep inside pasture
+    const c = clampToPasture(s.x, s.y);
+    s.x = c.x; s.y = c.y;
   }
+}
 
   function draw(ctx, cam) {
     for (let i = 0; i < sheep.length; i++) {
