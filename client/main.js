@@ -12,6 +12,7 @@ import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
 import { buildBridges, toBridgeSet } from "./bridges.js";
 import { createWolvesManager } from "./wolves.js";
+import { createClouds } from "./clouds.js"; // ⬅️ NEW
 
 /* ===== CONFIG ===== */
 const TILE = 20;
@@ -56,6 +57,14 @@ sheepMgr.addSheep(2, player);
 /* ===== WOLVES ===== */
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 
+/* ===== CLOUDS (screen-space with light parallax) ===== */
+const clouds = createClouds({
+  canvas,
+  count: 7,
+  parallax: 0.18,
+  images: ["assets/cloud1.png","assets/cloud2.png","assets/cloud3.png"]
+});
+
 /* ===== CAMERA ===== */
 function cameraRect(){
   const vw = canvas.width, vh = canvas.height;
@@ -88,7 +97,7 @@ function nearestPatchInTiles(xPx, yPx, maxTiles){
 function drawHUD(){
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(10, 10, 220, 52);
+  ctx.fillRect(10, 10, 260, 52);
   ctx.fillStyle = "#fff";
   ctx.font = "14px system-ui, sans-serif";
   const movingNow = (held.up||held.down||held.left||held.right) ? "yes" : "no";
@@ -103,7 +112,7 @@ let last = performance.now();
 function loop(now){
   const dt = now - last; last = now;
 
-  // movement cadence (grid step); player still uses STEP_MS to advance tiles
+  // movement cadence (grid step)
   player.moveCooldown -= dt;
   if (player.moveCooldown <= 0) {
     if (tryMove(player, held, { WORLD, ringAt: world.ringAt, bridgeSet })) {
@@ -115,7 +124,7 @@ function loop(now){
     }
   }
 
-  // 🔑 KEY CHANGE: treat "moving" as "any movement key is held"
+  // Treat "moving" as "any key held"
   const moving = (held.up || held.down || held.left || held.right);
 
   // update sheep (follow + food seeking)
@@ -138,7 +147,7 @@ function loop(now){
     }
   }
 
-  // Wolves (can remove sheep directly from the manager's list)
+  // Wolves
   wolves.update(now, dt, sheepMgr.list);
 
   // Respawn patches to maintain count
@@ -154,20 +163,22 @@ function loop(now){
   // camera
   const cam = cameraRect();
 
-  // world + FX
+  // world + FX (background)
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
   drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
 
-  // bridges + patches (under entities)
+  // bridges + patches
   drawBridges(ctx, cam, TILE, bridgeTiles);
   drawFoodPatches(ctx, cam, TILE, foodPatches);
 
-  // wolves (draw above patches, below player)
+  // wolves + entities
   wolves.draw(ctx, cam, TILE);
-
-  // entities
   sheepMgr.draw(ctx, cam);
   drawPlayer(ctx, player, TILE, cam);
+
+  // clouds in front of entities (under UI)
+  clouds.update(now, dt, cam);
+  clouds.draw(ctx);
 
   // UI
   drawMinimap(ctx, world.mapLayer, cam, player, { TILE, WORLD, worldPx: world.worldPx, MINIMAP });
