@@ -178,7 +178,7 @@ function loop(now){
 
   // clouds in front of entities (under UI)
   clouds.update(now, dt, cam);
-  clouds.draw(ctx);
+  clouds.draw(ctx, cam); // ⬅️ add cam here
 
   // UI
   drawMinimap(ctx, world.mapLayer, cam, player, { TILE, WORLD, worldPx: world.worldPx, MINIMAP });
