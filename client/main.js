@@ -138,8 +138,25 @@ ensureHerd(selfKey);
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 
 /* ===== HOST ELECTION ===== */
+// Prefer explicit URL param; else pick the lexicographically-smallest id among connected players.
 let isHost = false;
-setTimeout(() => { isHost = (net.others.size === 0); }, 700);
+
+function recomputeHost() {
+  if (FORCE_HOST) { isHost = true; return; }
+  // build a list from players + myId (in case presence hasn’t echoed back yet)
+  const ids = new Set();
+  for (const [id] of players) ids.add(id);
+  if (net.myId) ids.add(net.myId);
+  if (myId) ids.add(myId);
+  if (ids.size === 0) { isHost = true; return; }  // alone
+  const minId = [...ids].sort()[0];
+  isHost = (minId === net.myId) || (minId === myId);
+}
+
+// call this whenever roster changes
+net.onUpsert(() => recomputeHost());
+net.onRemove(() => recomputeHost());
+setTimeout(recomputeHost, 500); // also once shortly after connect
 
 /* ===== SNAPSHOT (de)serialize ===== */
 function serializeHerd(mgr){
