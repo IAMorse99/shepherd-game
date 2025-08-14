@@ -5,9 +5,8 @@ import {
   drawVisibleFX,
   drawMinimap,
   drawBridges,
-  // ⬇️ we'll add these in the next file you update (map.js)
-  createFoodPatches,
-  drawFoodPatches,
+  createFoodPatches,   // from map.js
+  drawFoodPatches,     // from map.js
 } from "./map.js";
 import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
@@ -38,7 +37,8 @@ const bridgeTiles = buildBridges(world);      // array of {x,y}
 const bridgeSet   = toBridgeSet(bridgeTiles); // Set("x,y")
 
 /* ===== FOOD PATCHES ===== */
-let foodPatches = createFoodPatches(world, FOOD_PATCH_COUNT); // Set("x,y")
+// 🔧 FIX: pass { WORLD, ringAt } instead of the whole world object
+let foodPatches = createFoodPatches({ WORLD, ringAt: world.ringAt }, FOOD_PATCH_COUNT); // Set("x,y")
 let foodRespawnTimer = 0;
 const tileKey = (x,y) => `${x},${y}`;
 
@@ -63,14 +63,15 @@ function cameraRect(){
   return { x: camX, y: camY, w: vw, h: vh };
 }
 
-/* ===== HUD (sheep only) ===== */
+/* ===== HUD (sheep + patch count) ===== */
 function drawHUD(){
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(10, 10, 120, 36);
+  ctx.fillRect(10, 10, 160, 52);
   ctx.fillStyle = "#fff";
   ctx.font = "14px system-ui, sans-serif";
   ctx.fillText(`Sheep: ${sheepMgr.count}`, 18, 32);
+  ctx.fillText(`Patches: ${foodPatches.size}`, 18, 50);
   ctx.restore();
 }
 
@@ -116,8 +117,8 @@ function loop(now){
   if (foodRespawnTimer >= FOOD_RESPAWN_EVERY_MS) {
     foodRespawnTimer = 0;
     if (foodPatches.size < FOOD_PATCH_COUNT) {
-      // add 1 new random pasture patch
-      const one = createFoodPatches(world, 1);
+      // 🔧 FIX: also pass { WORLD, ringAt } here
+      const one = createFoodPatches({ WORLD, ringAt: world.ringAt }, 1);
       for (const k of one) foodPatches.add(k);
     }
   }
