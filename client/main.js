@@ -218,38 +218,66 @@ function drawAnimatedFX(cam, t) {
 }
 
 /* ===== CLOUDS (image-based) =====
-   Place PNGs at: client/public/cloud1.png, cloud2.png, cloud3.png
-   Use relative paths (no leading slash) since index.html lives in client/
+   PNGs live at: client/public/cloud1.png, cloud2.png, cloud3.png
+   We load them, then spawn clouds on-screen so you see them right away.
 */
-const cloudSrcs = ["cloud1.png", "cloud2.png", "cloud3.png"];
-const cloudImages = cloudSrcs.map(src => { const i = new Image(); i.src = src; return i; });
+const CLOUD_SRCS = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
 
-const clouds = Array.from({length: 6}).map(() => ({
-  img: cloudImages[Math.floor(Math.random() * cloudImages.length)],
-  x: Math.random()*2000 - 400,
-  y: Math.random()*1200 - 200,
-  scale: 0.5 + Math.random()*0.6,
-  speed: 0.06 + Math.random()*0.06,
-  alpha: 0.12 + Math.random()*0.06
-}));
+function loadImg(src){
+  return new Promise(res => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => { console.warn("Cloud image failed:", src); res(new Image()); };
+    i.src = src;
+  });
+}
+
+let cloudImgs = [];
+let clouds = [];
+let cloudsReady = false;
+
+async function initClouds(){
+  cloudImgs = await Promise.all(CLOUD_SRCS.map(loadImg));
+  // create 6 clouds; start within the current canvas bounds so they’re visible
+  clouds = Array.from({length: 6}).map(() => {
+    const img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
+    const scale = 0.7 + Math.random()*0.7;              // a bit larger to notice
+    const w = (img.naturalWidth  || 512) * scale;
+    const h = (img.naturalHeight || 512) * scale;
+    return {
+      img,
+      x: Math.random() * (canvas.width  - w),            // visible now
+      y: Math.random() * (canvas.height - h),
+      scale,
+      speed: 0.05 + Math.random()*0.06,
+      alpha: 0.20 + Math.random()*0.08                  // higher alpha to confirm
+    };
+  });
+  cloudsReady = true;
+}
+initClouds();
 
 function drawClouds(){
+  if (!cloudsReady) return;
   ctx.save();
   clouds.forEach(c => {
     const w = (c.img.naturalWidth  || 0) * c.scale;
     const h = (c.img.naturalHeight || 0) * c.scale;
-    if (w > 0 && h > 0) {
+    if (w > 0 && h > 0){
       ctx.globalAlpha = c.alpha;
       ctx.drawImage(c.img, c.x, c.y, w, h);
     }
+    // drift right
     c.x += c.speed;
-    if (w > 0 && c.x > canvas.width + 200) {
-      c.x = -w - 100;
-      c.y = Math.random()*canvas.height - 100;
-      c.img = cloudImages[Math.floor(Math.random() * cloudImages.length)];
-      c.scale = 0.5 + Math.random()*0.6;
-      c.alpha = 0.12 + Math.random()*0.06;
-      c.speed = 0.06 + Math.random()*0.06;
+    if (w > 0 && c.x > canvas.width + 120){
+      c.img = cloudImgs[Math.floor(Math.random()*cloudImgs.length)];
+      c.scale = 0.7 + Math.random()*0.7;
+      const nw = (c.img.naturalWidth||512)*c.scale;
+      const nh = (c.img.naturalHeight||512)*c.scale;
+      c.x = -nw - 60;
+      c.y = Math.random() * (canvas.height - nh);
+      c.alpha = 0.20 + Math.random()*0.08;
+      c.speed = 0.05 + Math.random()*0.06;
     }
   });
   ctx.restore();
