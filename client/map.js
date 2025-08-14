@@ -25,6 +25,7 @@ export function buildMap({ TILE, WORLD }) {
     dark:    maxR - rPasture - rWater - rGlen
   };
 
+  /* ---------- helpers ---------- */
   function radial(x, y) {
     const dx = x - cx + 0.5, dy = y - cy + 0.5;
     return Math.sqrt(dx*dx + dy*dy);
@@ -37,15 +38,14 @@ export function buildMap({ TILE, WORLD }) {
     return "dark";
   }
 
-  // Base palette
+  // Palette (pasture simplified, less speckle)
   const COLORS = {
-    pastureBase1: "#76c94a",
-    pastureBase2: "#84d454",
-    pastureShade: "rgba(0,0,0,0.10)",
-    water:        "#4aa7c9",
-    glen:         "#4c8b41",
-    dark:         "#234020",
-    grid:         "rgba(0,0,0,0.18)"
+    pasture1: "#76c94a",
+    pasture2: "#8ada57",
+    water:    "#4aa7c9",
+    glen:     "#4c8b41",
+    dark:     "#234020",
+    grid:     "rgba(0,0,0,0.18)"
   };
 
   // tiny deterministic noise
@@ -56,6 +56,20 @@ export function buildMap({ TILE, WORLD }) {
   }
   function r01(x, y, s=1) { return ((h2i(x*s, y*s) % 1000) / 1000); }
 
+  // color utils
+  function hexToRgb(hex) {
+    const s = hex.replace("#", "");
+    const n = parseInt(s.length === 3 ? s.split("").map(c=>c+c).join("") : s, 16);
+    return { r: (n>>16)&255, g: (n>>8)&255, b: n&255 };
+  }
+  function lerpC(a, b, t) {
+    const A = hexToRgb(a), B = hexToRgb(b);
+    const r = Math.round(A.r + (B.r - A.r) * t);
+    const g = Math.round(A.g + (B.g - A.g) * t);
+    const bC = Math.round(A.b + (B.b - A.b) * t);
+    return `rgb(${r},${g},${bC})`;
+  }
+
   // prerender to an offscreen canvas
   const worldPx = WORLD * TILE;
   const mapLayer = document.createElement("canvas");
@@ -63,34 +77,17 @@ export function buildMap({ TILE, WORLD }) {
   const mctx = mapLayer.getContext("2d");
   mctx.imageSmoothingEnabled = false;
 
-  // helper: lerp colors
-  function lerp(a, b, t) {
-    const A = hexToRgb(a), B = hexToRgb(b);
-    const r = Math.round(A.r + (B.r - A.r) * t);
-    const g = Math.round(A.g + (B.g - A.g) * t);
-    const bC = Math.round(A.b + (B.b - A.b) * t);
-    return `rgb(${r},${g},${bC})`;
-  }
-  function hexToRgb(hex) {
-    const s = hex.replace("#", "");
-    const n = parseInt(s.length === 3 ? s.split("").map(c=>c+c).join("") : s, 16);
-    return { r: (n>>16)&255, g: (n>>8)&255, b: n&255 };
-  }
-
-  // draw rings with nicer pasture
+  /* ---------- BASE TILES (very light texture only) ---------- */
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       const ring = ringAt(x, y);
-
-      // BASE fill
       if (ring === "pasture") {
-        // gentle radial brightening toward water edge
+        // smooth two‑tone gradient with slight radial bias (toward water edge)
         const r = radial(x, y);
-        const tRad = Math.max(0, Math.min(1, (r - edges.glen) / (edges.pasture - edges.glen)));
-        // micro‑variation
-        const n = r01(x, y) * 0.35 + r01(x+23, y-17, 3) * 0.65;
-        const mix = Math.min(1, Math.max(0, 0.25 + tRad*0.45 + (n-0.5)*0.25));
-        mctx.fillStyle = lerp(COLORS.pastureBase1, COLORS.pastureBase2, mix);
+        const tRad = Math.max(0, Math.min(1, (r - edges.glen) / Math.max(1, (edges.pasture - edges.glen))));
+        const micro = r01(x, y, 2) * 0.15 + r01(x+11, y-7, 5) * 0.25; // small tonal drift
+        const mix = Math.min(1, Math.max(0, 0.30 + tRad*0.40 + (micro-0.2)*0.20));
+        mctx.fillStyle = lerpC(COLORS.pasture1, COLORS.pasture2, mix);
       } else if (ring === "water") {
         mctx.fillStyle = COLORS.water;
       } else if (ring === "glen") {
@@ -100,59 +97,46 @@ export function buildMap({ TILE, WORLD }) {
       }
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
 
-      // subtle shading texture everywhere for depth
-      const n2 = (Math.sin((x*97 + y*57)) + 1) * 0.06;
+      // faint depth (way less than before)
+      const n2 = (Math.sin((x*71 + y*53)) + 1) * 0.04;
       mctx.fillStyle = `rgba(0,0,0,${n2})`;
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
     }
   }
 
-  // Pasture details: grass tufts, flowers, dirt flecks near water
+  /* ---------- BIGGER, SPARSER PASTURE FEATURES ---------- */
+  // • broad grass clumps (soft shapes), rare wildflowers
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       if (ringAt(x,y) !== "pasture") continue;
       const sx = x*TILE, sy = y*TILE;
+      const n = r01(x, y, 3);
 
-      const n = r01(x, y, 2);
-
-      // grass tufts (thin short strokes)
-      if (n > 0.35 && n < 0.80) {
-        mctx.save();
-        mctx.translate(sx, sy);
-        mctx.strokeStyle = "rgba(20,60,20,0.45)";
-        mctx.lineWidth = 1;
-        const count = 1 + Math.floor(n * 2);
-        for (let i = 0; i < count; i++) {
-          const rx = 3 + (r01(x+i, y-i, 5) * (TILE-6));
-          const ry = 3 + (r01(x-i, y+i, 5) * (TILE-6));
-          const len = 2 + Math.floor(r01(x+17*i, y-13*i, 7) * 3);
-          mctx.beginPath();
-          mctx.moveTo(rx, ry + len);
-          mctx.lineTo(rx + (r01(x*i, y*i, 11)-0.5)*2, ry);
-          mctx.stroke();
-        }
-        mctx.restore();
+      // broad clumps: low frequency, semi‑transparent overlays
+      if (n > 0.70 && n < 0.92) {
+        const t = (n - 0.70) / 0.22; // 0..1
+        const w = TILE * (0.9 + t * 0.6);
+        const h = TILE * (0.7 + t * 0.4);
+        const px = sx + (TILE - w)*0.5 + (r01(x+5, y-4, 7)-0.5)*2;
+        const py = sy + (TILE - h)*0.5 + (r01(x-6, y+9, 7)-0.5)*2;
+        mctx.fillStyle = `rgba(40, 90, 30, ${0.10 + t*0.08})`;
+        mctx.beginPath(); mctx.ellipse(px + w*0.5, py + h*0.55, w*0.48, h*0.36, (n*6)|0, 0, Math.PI*2);
+        mctx.fill();
       }
 
-      // rare wildflowers
-      if (n > 0.86) {
-        const c = (n > 0.95) ? "#ffd1e3" : (n > 0.90 ? "#fff8a8" : "#d6ffd3");
-        const px = sx + 4 + Math.floor(r01(x+99, y+11, 9) * (TILE-8));
-        const py = sy + 4 + Math.floor(r01(x-51, y-7, 9) * (TILE-8));
-        mctx.fillStyle = c;
-        mctx.beginPath(); mctx.arc(px, py, 1.5, 0, Math.PI*2); mctx.fill();
-      }
-
-      // faint dirt flecks closer to water edge
-      const r = radial(x, y);
-      if (r > edges.glen && r < edges.pasture && r01(x-3,y+7,4) > 0.92) {
-        mctx.fillStyle = "rgba(120,90,50,0.18)";
-        mctx.fillRect(sx + 6, sy + 6, 3, 3);
+      // rare, larger flowers (no confetti)
+      if (n > 0.965) {
+        const px = sx + 5 + Math.floor(r01(x+99, y+11, 9) * (TILE-10));
+        const py = sy + 5 + Math.floor(r01(x-51, y-7, 9) * (TILE-10));
+        mctx.fillStyle = (n > 0.985) ? "#fff3a8" : "#ffd1e3";
+        mctx.beginPath(); mctx.arc(px, py, 2.2, 0, Math.PI*2); mctx.fill();
+        mctx.fillStyle = "rgba(0,0,0,0.25)";
+        mctx.beginPath(); mctx.arc(px, py, 0.9, 0, Math.PI*2); mctx.fill();
       }
     }
   }
 
-  // darker, less‑welcoming center
+  /* ---------- darker, less‑welcoming center ---------- */
   const centerRadius = Math.max(0, (edges.dark+1) * TILE);
   if (centerRadius > 0) {
     mctx.fillStyle = "rgba(0,0,0,0.16)";
@@ -161,7 +145,7 @@ export function buildMap({ TILE, WORLD }) {
     mctx.fill();
   }
 
-  // grid overlay (keep it subtle)
+  /* ---------- grid overlay (unchanged) ---------- */
   mctx.strokeStyle = COLORS.grid;
   mctx.lineWidth = 1;
   for (let y = 0; y <= WORLD; y++) {
@@ -181,7 +165,7 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
   const x1 = Math.min(WORLD-1, Math.ceil((cam.x + cam.w) / TILE));
   const y1 = Math.min(WORLD-1, Math.ceil((cam.y + cam.h) / TILE));
 
-  // water shimmer
+  /* ---------- water shimmer (unchanged) ---------- */
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "water") continue;
@@ -194,7 +178,7 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
     }
   }
 
-  // glen dappled light
+  /* ---------- glen dappled light (unchanged) ---------- */
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "glen") continue;
@@ -206,22 +190,38 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
     }
   }
 
-  // NEW: pasture wind sweep (very subtle moving brightness)
+  /* ---------- NEW: pasture wind bands (clearer animation) ---------- */
+  // band 1: wide, slow, brightening sweep
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
       const sx = x*TILE - cam.x, sy = y*TILE - cam.y;
-      // diagonal wave moving over time
-      const wave = Math.sin((x*0.35 + y*0.25) + now*0.0012);
-      if (wave > 0.55) {
-        const a = (wave - 0.55) * 0.06; // max ~0.027
+
+      // diagonal band moving over time
+      const k = (x*0.36 + y*0.28) - now*0.0011; // phase
+      const w = 1.2; // band "width" factor
+      const band = Math.sin(k);
+      if (band > 0.40) {
+        // map [0.40..1] to [0..1] then scale alpha
+        const t = (band - 0.40) / (1 - 0.40);
+        const a = 0.05 + 0.08*t; // brighter than before, still soft
         ctx.fillStyle = `rgba(255,255,255,${a})`;
+        ctx.fillRect(sx, sy, TILE, TILE);
+      }
+
+      // band 2: fainter counter-phase shadow band for depth
+      const k2 = (x*0.34 - y*0.22) + now*0.0009;
+      const band2 = Math.sin(k2);
+      if (band2 > 0.55) {
+        const t2 = (band2 - 0.55) / (1 - 0.55);
+        const a2 = 0.02 + 0.05*t2;
+        ctx.fillStyle = `rgba(0,0,0,${a2})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
     }
   }
 
-  // dark forest fireflies
+  /* ---------- dark forest fireflies (unchanged) ---------- */
   function hash2(x,y){ let h = x*374761393 + y*668265263; h = (h ^ (h>>>13)) >>> 0; return (h % 1000) / 1000; }
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
