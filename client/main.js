@@ -1,4 +1,3 @@
-// client/main.js
 "use strict";
 import {
   buildMap,
@@ -62,23 +61,9 @@ function applyHerdSnapshot(mgr, snap){
 
 /* ===== WOLVES (drawing only) ===== */
 const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
+// Only handle snapshot; let wolves.js handle drawing sprites
 wolves.applySnapshot = function(list){
-  // list: [[x,y], ...]
   this._list = list.map(([x,y]) => ({ x, y }));
-};
-wolves.draw = function(ctx, cam, TILE){
-  if (!this._list) return;
-  for (const w of this._list) {
-    const sx = w.x - cam.x, sy = w.y - cam.y;
-    // draw sprite if your wolves.js has it; fallback dot:
-    if (typeof this.drawSprite === "function" && this.drawSprite(ctx, sx, sy, TILE)) {
-      // drawn by sprite
-    } else {
-      ctx.fillStyle = "#3b2e2e";
-      ctx.beginPath(); ctx.arc(sx, sy, Math.max(5, TILE*0.3), 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.stroke();
-    }
-  }
 };
 
 /* ===== NET (WS) ===== */

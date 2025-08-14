@@ -117,7 +117,7 @@ function nearestPatchInTiles(foodPatches, xPx, yPx, maxTiles){
 /* ===== Authoritative State ===== */
 const players = new Map(); // id -> {id,name,x,y,held,moveCooldown}
 const herds   = new Map(); // id -> [{x,y,vx,vy,full,cd,ox,oy,phase}]
-let wolves    = [];        // [{x,y,vx,vy,target: {id,idx} | null}]
+let wolves    = [];        // [{x,y,vx,vy,target|null,lifeMs}]
 let foodPatches = createFoodPatches(FOOD_PATCH_COUNT);
 let foodRespawnTimer = 0;
 
@@ -148,8 +148,13 @@ function canWalk(nx,ny){
   if (nx<0||ny<0||nx>=WORLD||ny>=WORLD) return false;
   const r = ringAt(nx,ny);
   if (r === "water") return bridgeSet.has(tileKey(nx,ny));
-  return r !== "dark"; // block dark forest for now (match your earlier rules if needed)
+  return r !== "dark"; // block dark forest for now
 }
+
+/* ===== Wolves tuning (NEW) ===== */
+const WOLF_MAX = 3;                // soft cap (was 6)
+const WOLF_SPAWN_CHANCE = 0.004;   // ~0.4% per tick (was 2%) ⇒ ~1 every ~25s on average
+const WOLF_LIFE_MS = 15000;        // wolves despawn after 15 seconds if still around
 
 /* Wolves: spawn in glen/dark and roam; if nearby any sheep, chase */
 function spawnWolf(){
@@ -159,19 +164,33 @@ function spawnWolf(){
     const y = Math.floor(Math.random()*WORLD);
     const r = ringAt(x,y);
     if (r==="glen" || r==="dark") {
-      wolves.push({ x:x*TILE+TILE/2, y:y*TILE+TILE/2, vx:0, vy:0, target:null });
+      wolves.push({
+        x:x*TILE+TILE/2,
+        y:y*TILE+TILE/2,
+        vx:0, vy:0,
+        target:null,
+        life: WOLF_LIFE_MS,   // NEW: lifetime countdown in ms
+      });
       return;
     }
   }
 }
+
 function updateWolves(dt, allTargets){
-  // occasionally spawn up to a soft cap
-  if (wolves.length < 6 && Math.random() < 0.02) spawnWolf();
+  // spawn with lower chance up to lower cap
+  if (wolves.length < WOLF_MAX && Math.random() < WOLF_SPAWN_CHANCE) spawnWolf();
 
   const SPEED = TILE*9.5;
   const DRIFT = TILE*2.0;
 
-  for (const w of wolves) {
+  // iterate backwards so we can remove wolves that expire
+  for (let i = wolves.length - 1; i >= 0; i--) {
+    const w = wolves[i];
+
+    // NEW: lifetime countdown & despawn
+    w.life = (w.life ?? WOLF_LIFE_MS) - TICK_MS;
+    if (w.life <= 0) { wolves.splice(i, 1); continue; }
+
     let tx = null, ty = null;
 
     // pick closest target sheep
@@ -222,7 +241,7 @@ wss.on("connection", (ws) => {
   players.set(ws.id, { id: ws.id, name: ws.name, x: spawn.x, y: spawn.y, held: ws.held, moveCooldown: 0 });
   ensureHerd(ws.id);
 
-  // greet with a tiny hello (client may show name soon)
+  // greet with a tiny hello
   send(ws, { type: "hello", id: ws.id, name: ws.name });
 
   ws.on("message", (buf) => {
@@ -324,7 +343,7 @@ setInterval(() => {
       s.y += s.vy * dt;
       s.phase += dt * 0.9;
 
-      // grazing (hungry-first is fine per tick)
+      // grazing
       const tx = Math.floor(s.x / TILE), ty = Math.floor(s.y / TILE);
       const key = tileKey(tx,ty);
       if (s.full < MEALS_TO_BREED && foodPatches.has(key)) {
@@ -391,6 +410,7 @@ setInterval(() => {
       herdsSnap[id] = flock.map(s => [Math.round(s.x), Math.round(s.y), s.full|0, Math.max(0, s.cd|0)]);
     }
 
+    // keep wolves snapshot as [x,y] pairs so the client code stays unchanged
     const wolvesSnap = wolves.map(w => [Math.round(w.x), Math.round(w.y)]);
 
     broadcast({
