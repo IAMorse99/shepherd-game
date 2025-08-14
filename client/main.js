@@ -222,7 +222,8 @@ function drawAnimatedFX(cam, t) {
    We preload them, then spawn a few on-screen.
 */
 const CLOUDS_ON = true;
-const CLOUD_SRCS = ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"];
+// was: ["public/cloud1.png", "public/cloud2.png", "public/cloud3.png"]
+const CLOUD_SRCS = ["cloud1.png", "cloud2.png", "cloud3.png"];
 
 function loadImg(src){
   return new Promise(res => {
