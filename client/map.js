@@ -48,7 +48,7 @@ export function buildMap({ TILE, WORLD }) {
     grid:     "rgba(0,0,0,0.18)"
   };
 
-  // tiny deterministic noise
+  // deterministic noise
   function h2i(x, y) {
     let h = (x * 374761393 + y * 668265263) ^ 0x9e3779b9;
     h ^= h >>> 13; h = (h * 1274126177) >>> 0;
@@ -77,17 +77,17 @@ export function buildMap({ TILE, WORLD }) {
   const mctx = mapLayer.getContext("2d");
   mctx.imageSmoothingEnabled = false;
 
-  /* ---------- BASE TILES (clean + gentle tone drift) ---------- */
+  /* ---------- BASE TILES (very gentle tonal drift) ---------- */
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       const ring = ringAt(x, y);
 
       if (ring === "pasture") {
-        // smooth two‑tone gradient with slight radial bias (toward water edge)
+        // keep base contrast low so animation is faint
         const r = radial(x, y);
         const tRad = Math.max(0, Math.min(1, (r - edges.glen) / Math.max(1, (edges.pasture - edges.glen))));
-        const micro = r01(x, y, 2) * 0.1 + r01(x+11, y-7, 5) * 0.2; // small tonal drift
-        const mix = Math.min(1, Math.max(0, 0.30 + tRad*0.40 + (micro-0.15)*0.20));
+        const micro = r01(x, y, 2) * 0.06 + r01(x+11, y-7, 5) * 0.10; // smaller drift
+        const mix = Math.min(1, Math.max(0, 0.33 + tRad*0.30 + (micro-0.08)*0.18));
         mctx.fillStyle = lerpC(COLORS.pasture1, COLORS.pasture2, mix);
       } else if (ring === "water") {
         mctx.fillStyle = COLORS.water;
@@ -98,30 +98,46 @@ export function buildMap({ TILE, WORLD }) {
       }
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
 
-      // faint depth everywhere (very subtle)
-      const n2 = (Math.sin((x*71 + y*53)) + 1) * 0.03;
+      // faint depth everywhere (subtle)
+      const n2 = (Math.sin((x*71 + y*53)) + 1) * 0.025;
       mctx.fillStyle = `rgba(0,0,0,${n2})`;
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
     }
   }
 
-  /* ---------- PASTURE SPECKLES (brought back, sparse & tiny) ---------- */
-  // Tiny dots—low density so it doesn't get busy.
+  /* ---------- PASTURE DETAILS (speckles, dirt, rare flowers) ---------- */
   for (let y = 0; y < WORLD; y++) {
     for (let x = 0; x < WORLD; x++) {
       if (ringAt(x,y) !== "pasture") continue;
+      const sx = x*TILE, sy = y*TILE;
+
       const n = r01(x, y, 3);
-      if (n > 0.94) { // ~6% of tiles get a speckle
-        const sx = x*TILE, sy = y*TILE;
+
+      // speckles (tiny, sparse)
+      if (n > 0.955) { // ~4.5% tiles
         const px = sx + 4 + Math.floor(r01(x+99, y+11, 9) * (TILE-8));
         const py = sy + 4 + Math.floor(r01(x-51, y-7, 9) * (TILE-8));
-        const a  = 0.25 + (n-0.94)*0.9; // 0.25..0.79
+        const a  = 0.22 + (n-0.955)*0.6; // 0.22..~0.58
         mctx.fillStyle = `rgba(30,70,30,${a})`;
         mctx.fillRect(px, py, 1, 1);
-        if (n > 0.985) {
-          // occasional two-pixel speckle for variety
-          mctx.fillRect(px+1, py, 1, 1);
-        }
+        if (n > 0.990) mctx.fillRect(px+1, py, 1, 1); // rarer 2px
+      }
+
+      // rare flowers
+      if (n > 0.988) {
+        const px = sx + 5 + Math.floor(r01(x+199, y+17, 9) * (TILE-10));
+        const py = sy + 5 + Math.floor(r01(x-151, y-13, 9) * (TILE-10));
+        mctx.fillStyle = (n > 0.996) ? "#fff3a8" : "#ffd1e3";
+        mctx.beginPath(); mctx.arc(px, py, 2, 0, Math.PI*2); mctx.fill();
+        mctx.fillStyle = "rgba(0,0,0,0.22)";
+        mctx.beginPath(); mctx.arc(px, py, 0.8, 0, Math.PI*2); mctx.fill();
+      }
+
+      // dirt flecks nearer the water edge
+      const r = radial(x, y);
+      if (r > edges.glen && r < edges.pasture && r01(x-3,y+7,4) > 0.94) {
+        mctx.fillStyle = "rgba(120,90,50,0.16)";
+        mctx.fillRect(sx + 6, sy + 6, 3, 3);
       }
     }
   }
@@ -180,11 +196,12 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
     }
   }
 
-  /* ---------- PASTURE SHIMMER: dark band + thin light highlight trailing ---------- */
-  // Angle & motion tuned to “read” like wind sweep, same direction for both bands.
-  // Band A (dark lead)
-  const speed = 0.00125;    // motion speed
-  const freqX = 0.40, freqY = 0.28; // angle
+  /* ---------- PASTURE SHIMMER (faint): dark band + thin light trail ---------- */
+  const speed = 0.00125;             // motion speed (keep)
+  const freqX = 0.40, freqY = 0.28;  // angle (keep consistent)
+  const trailShift = 0.55;           // how far behind the highlight rides
+
+  // Dark lead band (fainter)
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
@@ -192,19 +209,16 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
 
       const k = (x*freqX + y*freqY) - now*speed;
       const wave = Math.sin(k);
-
-      // DARK lead band: fairly narrow, clearly visible
       if (wave > 0.60) {
-        const t = (wave - 0.60) / 0.40; // 0..1 across crest
-        const a = 0.05 + 0.10*t;        // up to 0.15 darkness
+        const t = (wave - 0.60) / 0.40;   // 0..1 across crest
+        const a = 0.02 + 0.04*t;          // max 0.06 (faint)
         ctx.fillStyle = `rgba(0,0,0,${a})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
     }
   }
 
-  // Band B (light trail), same direction, slightly behind = phase‑shift
-  const trailShift = 0.6; // smaller = closer to the dark band
+  // Thin bright trail (also faint)
   for (let y=y0; y<=y1; y++){
     for (let x=x0; x<=x1; x++){
       if (ringAt(x,y) !== "pasture") continue;
@@ -212,11 +226,9 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
 
       const k2 = (x*freqX + y*freqY) - now*speed + trailShift;
       const wave2 = Math.sin(k2);
-
-      // LIGHT trailing highlight: thinner & brighter ridge
       if (wave2 > 0.75) {
         const t2 = (wave2 - 0.75) / 0.25; // thin crest
-        const a2 = 0.06 + 0.11*t2;        // up to ~0.17
+        const a2 = 0.025 + 0.045*t2;      // max ~0.07 (faint)
         ctx.fillStyle = `rgba(255,255,255,${a2})`;
         ctx.fillRect(sx, sy, TILE, TILE);
       }
@@ -281,7 +293,6 @@ export function drawBridges(ctx, cam, TILE, bridges) {
 }
 
 /* ================== FOOD PATCHES ================== */
-/** Create a randomized set of pasture-only food patches. */
 export function createFoodPatches(world, count) {
   const { WORLD, ringAt } = world;
   const set = new Set();
@@ -296,7 +307,6 @@ export function createFoodPatches(world, count) {
   return set;
 }
 
-/** Draw bright green patches (under entities). */
 export function drawFoodPatches(ctx, cam, TILE, patchSet) {
   if (!patchSet || patchSet.size === 0) return;
   ctx.save();
@@ -305,7 +315,7 @@ export function drawFoodPatches(ctx, cam, TILE, patchSet) {
     const x = +xs, y = +ys;
     const sx = x * TILE - cam.x;
     const sy = y * TILE - cam.y;
-    ctx.fillStyle = "#9bf07a"; // special clover green
+    ctx.fillStyle = "#9bf07a";
     ctx.fillRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
     ctx.strokeStyle = "rgba(0,0,0,0.25)";
     ctx.lineWidth = 1;
