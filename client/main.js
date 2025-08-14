@@ -23,8 +23,8 @@ const MINIMAP = { size: 220, pad: 12 };
 const FOOD_PATCH_COUNT = 140;
 const FOOD_RESPAWN_EVERY_MS = 1500;
 
-const NET_PLAYER_SEND_MS = 66;    // ~15 fps for positions
-const NET_WORLD_SEND_MS  = 200;   // ~5 fps for world snapshots
+const NET_PLAYER_SEND_MS = 66;   // ~15 fps
+const NET_WORLD_SEND_MS  = 200;  // ~5 fps
 
 /* ===== CANVAS ===== */
 const canvas = document.getElementById("map");
@@ -59,34 +59,51 @@ addEventListener("keyup",   e => { const k = keymap[e.code]; if (!k) return; hel
 const params = new URLSearchParams(location.search);
 const myName = params.get("n") || ("Shep_" + Math.random().toString(36).slice(2,6));
 
-const SUPABASE_URL  = "https://keyrkzjqxhzhznltsjmp.supabase.co";   // <-- paste yours
-const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtleXJrempxeGh6aHpubHRzam1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNDM3MzksImV4cCI6MjA3MDcxOTczOX0.02TM31EamVlKzYVYaWQLysuVHL36H3ng5_d90mT8sIk";               // <-- paste yours
+const SUPABASE_URL  = "https://keyrkzjqxhzhznltsjmp.supabase.co"; // <-- yours
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtleXJrempxeGh6aHpubHRzam1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNDM3MzksImV4cCI6MjA3MDcxOTczOX0.02TM31EamVlKzYVYaWQLysuVHL36H3ng5_d90mT8sIk"; // <-- yours
 
 const net = createNet({ url: SUPABASE_URL, anonKey: SUPABASE_ANON, room: "shepherd-room-1" });
 net.connect(myName);
 
-// ---- Net compatibility shims (works with or without specific methods) ----
-function onSheep(handler){
-  if (!net) return;                                  // offline
-  if (typeof onSheep === "function") {
-    onSheep(handler);                            // preferred
+// a stable local id until net reports one
+let myId = null;
+const localId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+const getSenderId = () => (net && net.myId) || myId || localId;
+
+/* ---- Correct (non-recursive) shims + echo guard ---- */
+function subscribeSheep(handler){
+  if (!net) return;
+  if (typeof net.onSheep === "function") {
+    net.onSheep((msg) => {
+      const m = msg?.data ?? msg;
+      if (!m || m.senderId === getSenderId()) return;
+      handler(m);
+    });
   } else if (typeof net.onBroadcast === "function") {
-    net.onBroadcast("sheep", handler);               // generic
-  } // else: no-op (followers won’t get snapshots yet)
+    net.onBroadcast("sheep", (msg) => {
+      const m = msg?.data ?? msg;
+      if (!m || m.senderId === getSenderId()) return;
+      handler(m);
+    });
+  } else {
+    console.warn("No sheep subscription API on net");
+  }
 }
 
-function sendSheepSnapshot(payload){
-  if (!net) return;                                  // offline
-  if (typeof sendSheepSnapshot === "function") {
-    sendSheepSnapshot(payload);                  // preferred
+function publishSnapshot(payload){
+  if (!net) return;
+  const envelope = { senderId: getSenderId(), ...payload };
+  if (typeof net.sendSheepSnapshot === "function") {
+    net.sendSheepSnapshot(envelope);
   } else if (typeof net.broadcast === "function") {
-    net.broadcast("sheep", payload);                 // generic
-  } // else: no-op
+    net.broadcast("sheep", envelope);
+  } else {
+    console.warn("No sheep publish API on net");
+  }
 }
 
 /* Track players (tile coords) */
 const players = new Map(); // id -> { id, name, x, y, prevX, prevY }
-let myId = null;
 net.onUpsert((p) => {
   if (!myId && p.self) myId = p.id;
   const prev = players.get(p.id);
@@ -124,13 +141,11 @@ const wolves = createWolvesManager({ TILE, WORLD, ringAt: world.ringAt });
 let isHost = false;
 setTimeout(() => { isHost = (net.others.size === 0); }, 700);
 
-/* ===== SNAPSHOT (de)serialize without requiring mgr methods ===== */
+/* ===== SNAPSHOT (de)serialize ===== */
 function serializeHerd(mgr){
-  // compact array of [x,y,full,cd]
   return mgr.list.map(s => [Math.round(s.x), Math.round(s.y), s.full|0, Math.max(0, s.cd|0)]);
 }
 function applyHerdSnapshot(mgr, snap, leaderFallbackPlayer){
-  // resize list
   const L = snap.length;
   while (mgr.list.length < L) mgr.addSheep(1, leaderFallbackPlayer);
   while (mgr.list.length > L) mgr.list.pop();
@@ -138,14 +153,13 @@ function applyHerdSnapshot(mgr, snap, leaderFallbackPlayer){
     const s = mgr.list[i];
     const [x,y,full,cd] = snap[i];
     s.x = x; s.y = y; s.full = full|0; s.cd = cd|0;
-    // zero velocity so they don’t drift between host ticks
     s.vx = 0; s.vy = 0;
   }
 }
 
 /* Followers apply host snapshots */
-onSheep((payload) => {
-  if (isHost) return; // host ignores
+subscribeSheep((payload) => {
+  if (isHost) return; // host ignores its own (and echo-guard already filters)
   if (payload?.herds && typeof payload.herds === "object") {
     for (const pid in payload.herds) {
       if (!herds.has(pid)) herds.set(pid, makeSheepMgr());
@@ -290,13 +304,13 @@ function loop(now){
       }
     }
 
-    // broadcast snapshot
+    // broadcast snapshot (with senderId)
     if (now - lastWorldSend > NET_WORLD_SEND_MS) {
       const herdsSnap = {};
       for (const [pid, mgr] of herds) herdsSnap[pid] = serializeHerd(mgr);
       const patches = [...foodPatches];
       const wolfSnap = (wolves.serialize ? wolves.serialize() : []);
-      sendSheepSnapshot({ herds: herdsSnap, patches, wolves: wolfSnap });
+      publishSnapshot({ herds: herdsSnap, patches, wolves: wolfSnap });
       lastWorldSend = now;
     }
   } else {
