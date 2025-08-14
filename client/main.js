@@ -220,7 +220,7 @@ function drawAnimatedFX(cam, t) {
 /* ===== CLOUDS (image-based, auto-path + badge) ===== */
 const CLOUDS_ON = true;
 const N_CLOUDS = 6;
-const FILES = ["cloud1.png","cloud2.png","cloud3.png"];
+const FILES = ["/cloud1.png","/cloud2.png","/cloud3.png"];
 
 // Try all likely URL patterns so it works regardless of deployment root.
 const pathCandidates = (name) => ([
