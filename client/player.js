@@ -6,10 +6,19 @@ export function createPlayer({ cx, edges }) {
   return { x: cx, y: edges.pasture - 4, moveCooldown: 0 };
 }
 
-/** Movement helpers. */
-export function canWalk(nx, ny, { WORLD, edges, radial }) {
+/** Tile passability rules:
+ * - Water is blocked unless (x,y) is one of the bridge tiles.
+ * - All other terrain is walkable.
+ */
+export function canWalk(nx, ny, env) {
+  const { WORLD, ringAt, bridgeSet } = env;
   if (nx < 0 || ny < 0 || nx >= WORLD || ny >= WORLD) return false;
-  return radial(nx, ny) <= edges.pasture + 0.2;
+
+  const t = ringAt(nx, ny);
+  if (t === "water") {
+    return bridgeSet?.has?.(`${nx},${ny}`) || false;
+  }
+  return true; // pasture, glen, dark are fine
 }
 
 export function tryMove(player, held, env) {

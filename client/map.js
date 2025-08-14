@@ -63,7 +63,7 @@ export function buildMap({ TILE, WORLD }) {
       mctx.fillRect(x*TILE, y*TILE, TILE, TILE);
     }
   }
-  // darker, less-welcoming center
+  // darker, less‑welcoming center
   const centerRadius = Math.max(0, (edges.dark+1) * TILE);
   if (centerRadius > 0) {
     mctx.fillStyle = "rgba(0,0,0,0.16)";
@@ -160,4 +160,15 @@ export function drawMinimap(ctx, mapLayer, cam, player, { TILE, WORLD, worldPx, 
   ctx.strokeStyle = "rgba(255,255,255,0.85)";
   ctx.lineWidth = 1;
   ctx.strokeRect(bx, by, bw, bh);
+}
+
+/** Bridges drawing (simple wood tiles). */
+export function drawBridges(ctx, cam, TILE, bridges) {
+  if (!bridges || !bridges.length) return;
+  ctx.fillStyle = "#c2a35d"; // wood plank color
+  for (const b of bridges) {
+    const sx = b.x * TILE - cam.x;
+    const sy = b.y * TILE - cam.y;
+    ctx.fillRect(sx, sy, TILE, TILE);
+  }
 }
