@@ -205,9 +205,10 @@ export function drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt }) {
   const t1 = now * 0.0009;
   const t2 = now * 0.0013;
   const wiggle = (x, y) =>
-    Math.sin(x*0.10 + y*0.05 + t1) * 0.35 +
-    Math.sin(x*0.07 - y*0.08 - t2) * 0.28 +
-    Math.sin(y*0.06 + t1*0.7)      * 0.18;
+    Math.sin(x*0.10 + y*0.05 + t1) * 0.50 +
+    Math.sin(x*0.07 - y*0.08 - t2) * 0.40 +
+    Math.sin(y*0.06 + t1*0.7)      * 0.28;
+
 
   // Dark lead band (faint)
   for (let y=y0; y<=y1; y++){
