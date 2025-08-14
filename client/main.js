@@ -1,6 +1,14 @@
 // client/main.js
 "use strict";
-import { buildMap, drawVisibleFX, drawMinimap, drawBridges } from "./map.js";
+import {
+  buildMap,
+  drawVisibleFX,
+  drawMinimap,
+  drawBridges,
+  // ⬇️ we'll add these in the next file you update (map.js)
+  createFoodPatches,
+  drawFoodPatches,
+} from "./map.js";
 import { createPlayer, tryMove, drawPlayer } from "./player.js";
 import { createSheepManager } from "./sheep.js";
 import { buildBridges, toBridgeSet } from "./bridges.js";
@@ -10,6 +18,10 @@ const TILE = 20;
 const WORLD = 200;
 const STEP_MS = 90;
 const MINIMAP = { size: 220, pad: 12 };
+
+// Food patches config
+const FOOD_PATCH_COUNT = 140;        // how many patches exist at once
+const FOOD_RESPAWN_EVERY_MS = 1500;  // try to respawn a patch periodically
 
 /* ===== CANVAS ===== */
 const canvas = document.getElementById("map");
@@ -22,8 +34,13 @@ addEventListener("resize", resize); resize();
 const world = buildMap({ TILE, WORLD });
 
 /* ===== BRIDGES ===== */
-const bridgeTiles = buildBridges(world);     // array of {x,y}
+const bridgeTiles = buildBridges(world);      // array of {x,y}
 const bridgeSet   = toBridgeSet(bridgeTiles); // Set("x,y")
+
+/* ===== FOOD PATCHES ===== */
+let foodPatches = createFoodPatches(world, FOOD_PATCH_COUNT); // Set("x,y")
+let foodRespawnTimer = 0;
+const tileKey = (x,y) => `${x},${y}`;
 
 /* ===== PLAYER & INPUT ===== */
 const player = createPlayer({ cx: world.cx, edges: world.edges });
@@ -44,6 +61,17 @@ function cameraRect(){
   camX = Math.max(0, Math.min(camX, world.worldPx - vw));
   camY = Math.max(0, Math.min(camY, world.worldPx - vh));
   return { x: camX, y: camY, w: vw, h: vh };
+}
+
+/* ===== HUD (sheep only) ===== */
+function drawHUD(){
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(10, 10, 120, 36);
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px system-ui, sans-serif";
+  ctx.fillText(`Sheep: ${sheepMgr.count}`, 18, 32);
+  ctx.restore();
 }
 
 /* ===== LOOP ===== */
@@ -69,8 +97,30 @@ function loop(now){
   const moving = movedThisTick || (player.x !== prevPX || player.y !== prevPY);
   prevPX = player.x; prevPY = player.y;
 
-  // update sheep
+  // update sheep (follow/mosey/breed)
   sheepMgr.update(now, dt, { player, moving });
+
+  // SHEEP GRAZING: any sheep standing on a food patch eats it
+  for (const s of sheepMgr.list) {
+    const tx = Math.floor(s.x / TILE);
+    const ty = Math.floor(s.y / TILE);
+    const key = tileKey(tx, ty);
+    if (foodPatches.has(key)) {
+      foodPatches.delete(key);
+      if (typeof sheepMgr.eat === "function") sheepMgr.eat(s, 1); // +1 meal to that sheep
+    }
+  }
+
+  // Respawn patches gradually to maintain target count
+  foodRespawnTimer += dt;
+  if (foodRespawnTimer >= FOOD_RESPAWN_EVERY_MS) {
+    foodRespawnTimer = 0;
+    if (foodPatches.size < FOOD_PATCH_COUNT) {
+      // add 1 new random pasture patch
+      const one = createFoodPatches(world, 1);
+      for (const k of one) foodPatches.add(k);
+    }
+  }
 
   // camera
   const cam = cameraRect();
@@ -79,8 +129,11 @@ function loop(now){
   ctx.drawImage(world.mapLayer, cam.x, cam.y, cam.w, cam.h, 0, 0, canvas.width, canvas.height);
   drawVisibleFX(ctx, cam, now, { TILE, WORLD, ringAt: world.ringAt });
 
-  // bridges on top of map (under entities)
+  // bridges (under entities)
   drawBridges(ctx, cam, TILE, bridgeTiles);
+
+  // food patches (under entities)
+  drawFoodPatches(ctx, cam, TILE, foodPatches);
 
   // entities
   sheepMgr.draw(ctx, cam);
@@ -88,6 +141,7 @@ function loop(now){
 
   // UI
   drawMinimap(ctx, world.mapLayer, cam, player, { TILE, WORLD, worldPx: world.worldPx, MINIMAP });
+  drawHUD();
 
   requestAnimationFrame(loop);
 }

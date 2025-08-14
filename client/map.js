@@ -172,3 +172,37 @@ export function drawBridges(ctx, cam, TILE, bridges) {
     ctx.fillRect(sx, sy, TILE, TILE);
   }
 }
+
+/* ================== FOOD PATCHES ================== */
+/** Create a randomized set of pasture-only food patches. */
+export function createFoodPatches(world, count) {
+  const { WORLD, ringAt } = world;
+  const set = new Set();
+  let guard = 0;
+  while (set.size < count && guard < count * 50) {
+    guard++;
+    const x = Math.floor(Math.random() * WORLD);
+    const y = Math.floor(Math.random() * WORLD);
+    if (ringAt(x, y) !== "pasture") continue;
+    set.add(`${x},${y}`);
+  }
+  return set;
+}
+
+/** Draw bright green patches (under entities). */
+export function drawFoodPatches(ctx, cam, TILE, patchSet) {
+  if (!patchSet || patchSet.size === 0) return;
+  ctx.save();
+  for (const key of patchSet) {
+    const [xs, ys] = key.split(",");
+    const x = +xs, y = +ys;
+    const sx = x * TILE - cam.x;
+    const sy = y * TILE - cam.y;
+    ctx.fillStyle = "#9bf07a"; // special clover green
+    ctx.fillRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
+  }
+  ctx.restore();
+}
