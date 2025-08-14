@@ -2,35 +2,38 @@
 "use strict";
 
 /**
- * Sheep manager (snappy + simple):
+ * Sheep manager (reliable follow):
  * - Stationary by default
- * - Follow player in a loose ring ONLY while player moves
- * - If hungry AND a nearby patch exists, bee-line to it
- * - Velocities blend directly toward a desired vector (frame-rate aware)
+ * - If player moves: chase the player (with tiny per-sheep offset)
+ * - If hungry AND a nearby patch exists: bee-line to it
+ * - Velocities blend toward a desired vector for smooth motion
  * - Same API: list, addSheep, eat, update, draw, count, mealsToBreed
  */
 export function createSheepManager(env) {
   const { TILE, WORLD, edges, radial } = env;
 
   /* ===== Tunables ===== */
-  // Player ≈ 1 tile / 90ms ≈ 11.11 tiles/s → ~222 px/s with TILE=20
-  const FOLLOW_SPEED   = TILE * 13.5;   // ~270 px/s (catch-up > player)
-  const SEEK_SPEED     = TILE * 13.0;   // toward food
-  const STOP_DECAY_S   = 6.0;           // how fast we brake to 0 (per second)
-  const BLEND_RATE_S   = 7.5;           // how fast we adopt desired vel (per second)
+  // Player ≈ 1 tile / 90ms → ~222 px/s (TILE=20).
+  // Make sheep clearly faster so they catch up.
+  const FOLLOW_SPEED   = TILE * 14.0;   // ~280 px/s
+  const SEEK_SPEED     = TILE * 13.0;   // to patches
+  const BLEND_RATE_S   = 9.0;           // responsiveness (higher = snappier)
+  const STOP_DECAY_S   = 7.0;           // braking rate when stopping
 
-  const FORMATION_RADIUS = TILE * 2.0;  // ring radius around player while moving
-  const SEP_RADIUS       = TILE * 1.2;  // tiny push so they don't overlap
-  const SEP_PUSH         = TILE * 50;   // instantaneous push strength
+  // Follow offsets so they don't stack on the exact same pixel
+  const OFFSET_RADIUS  = TILE * 1.2;    // +/- around player
+  const SEP_RADIUS     = TILE * 1.0;    // tiny push apart
+  const SEP_PUSH       = TILE * 60;     // push strength
 
-  const SEEK_TILES       = 5;           // only chase patches within this many tiles
+  const SEEK_TILES     = 5;             // only chase patches within this many tiles
 
+  // Breeding
   const MEALS_TO_BREED    = 3;
   const BREED_COOLDOWN_MS = 8000;
 
   /* ===== State ===== */
-  const sheep = []; // [{x,y,vx,vy,phase,full,cd,slot}]
-  let slotCounter = 0;
+  // each sheep: {x,y,vx,vy,phase,full,cd,ox,oy}
+  const sheep = [];
 
   /* ===== Helpers ===== */
   function clampToPasture(x, y) {
@@ -43,22 +46,12 @@ export function createSheepManager(env) {
     return { x: cx + (dx / len) * maxR, y: cy + (dy / len) * maxR };
   }
   function lerp(a, b, t){ return a + (b - a) * t; }
-  function blendFactor(ratePerSec, dt){ // dt in seconds
-    // convert a per-second responsiveness into a per-frame alpha
-    // alpha = 1 - e^(-k * dt)
-    const k = Math.max(0, ratePerSec);
-    return 1 - Math.exp(-k * dt);
-  }
+  function blendFactor(ratePerSec, dt){ return 1 - Math.exp(-Math.max(0, ratePerSec) * dt); }
   function normTo(vx, vy, mag){
     const d = Math.hypot(vx, vy);
     if (d < 1e-6) return { vx: 0, vy: 0 };
     const k = mag / d;
     return { vx: vx * k, vy: vy * k };
-  }
-  function slotAngleFor(index){
-    // golden-angle spacing around the player
-    const GOLDEN = Math.PI * (3 - Math.sqrt(5));
-    return (index * GOLDEN) % (Math.PI * 2);
   }
 
   /* ===== API ===== */
@@ -66,16 +59,17 @@ export function createSheepManager(env) {
     const px = player.x * TILE + TILE / 2;
     const py = player.y * TILE + TILE / 2;
     for (let i = 0; i < n; i++) {
+      // give each sheep a tiny, persistent offset around the player
       const ang = Math.random() * Math.PI * 2;
-      const dist = TILE * (0.8 + Math.random() * 1.2);
+      const r   = OFFSET_RADIUS * (0.6 + Math.random() * 0.8);
+      const ox  = Math.cos(ang) * r;
+      const oy  = Math.sin(ang) * r;
       sheep.push({
-        x: px + Math.cos(ang) * dist,
-        y: py + Math.sin(ang) * dist,
+        x: px + ox, y: py + oy,
         vx: 0, vy: 0,
         phase: Math.random() * Math.PI * 2,
-        full: 0,
-        cd: 0,
-        slot: slotCounter++
+        full: 0, cd: 0,
+        ox, oy
       });
     }
   }
@@ -102,34 +96,33 @@ export function createSheepManager(env) {
     const py = player.y * TILE + TILE / 2;
 
     const alpha = blendFactor(BLEND_RATE_S, dt);
-    const brake = Math.exp(-STOP_DECAY_S * dt); // multiply current velocity by this when stopping
+    const brake = Math.exp(-STOP_DECAY_S * dt);
 
     for (let i = 0; i < sheep.length; i++) {
       const s = sheep[i];
 
-      // Decide desired velocity
-      let desiredVx = 0, desiredVy = 0;
+      // Desired velocity this frame
+      let dvx = 0, dvy = 0;
 
       if (moving) {
-        // follow ring target
-        const ang = slotAngleFor(s.slot);
-        const tx = px + Math.cos(ang) * FORMATION_RADIUS;
-        const ty = py + Math.sin(ang) * FORMATION_RADIUS;
+        // Chase the player's position + this sheep's personal offset
+        const tx = px + s.ox;
+        const ty = py + s.oy;
         const toT = normTo(tx - s.x, ty - s.y, FOLLOW_SPEED);
-        desiredVx = toT.vx; desiredVy = toT.vy;
+        dvx = toT.vx; dvy = toT.vy;
+
       } else if (s.full < MEALS_TO_BREED && typeof seekFood === "function") {
-        // hungry: only move if a patch is close enough
+        // Only move if there’s a patch close enough
         const found = seekFood(s.x, s.y, SEEK_TILES);
         if (found) {
           const fx = found.tx * TILE + TILE/2;
           const fy = found.ty * TILE + TILE/2;
           const toF = normTo(fx - s.x, fy - s.y, SEEK_SPEED);
-          desiredVx = toF.vx; desiredVy = toF.vy;
+          dvx = toF.vx; dvy = toF.vy;
         }
-      }
-      // else: desired velocity stays at 0 → we’ll brake
+      } // else idle → dv stays 0
 
-      // Tiny separation so they don't overlap when multiple share close slots
+      // Light separation so they don't overlap
       for (let j = 0; j < sheep.length; j++) {
         if (j === i) continue;
         const o = sheep[j];
@@ -137,19 +130,18 @@ export function createSheepManager(env) {
         const d  = Math.hypot(dx, dy);
         if (d > 1e-6 && d < SEP_RADIUS) {
           const push = (SEP_RADIUS - d) / SEP_RADIUS; // 0..1
-          desiredVx += (dx / d) * SEP_PUSH * push * dt;
-          desiredVy += (dy / d) * SEP_PUSH * push * dt;
+          dvx += (dx / d) * SEP_PUSH * push * dt;
+          dvy += (dy / d) * SEP_PUSH * push * dt;
         }
       }
 
-      // Blend toward desired velocity (frame-rate aware)
-      s.vx = lerp(s.vx, desiredVx, alpha);
-      s.vy = lerp(s.vy, desiredVy, alpha);
+      // Blend to desired velocity
+      s.vx = lerp(s.vx, dvx, alpha);
+      s.vy = lerp(s.vy, dvy, alpha);
 
-      // If desired is zero (idle), brake velocity smoothly
-      if (desiredVx === 0 && desiredVy === 0) {
-        s.vx *= brake;
-        s.vy *= brake;
+      // If we're not supposed to move, brake smoothly
+      if (dvx === 0 && dvy === 0) {
+        s.vx *= brake; s.vy *= brake;
         if (Math.abs(s.vx) < 0.02) s.vx = 0;
         if (Math.abs(s.vy) < 0.02) s.vy = 0;
       }
@@ -158,7 +150,7 @@ export function createSheepManager(env) {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
 
-      // Keep inside pasture
+      // Stay in pasture
       const c = clampToPasture(s.x, s.y);
       s.x = c.x; s.y = c.y;
 
