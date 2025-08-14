@@ -188,7 +188,7 @@ function updateWolves(dt, allTargets){
   // spawn up to soft cap
   if (wolves.length < WOLF_MAX && Math.random() < WOLF_SPAWN_CHANCE) spawnWolf();
 
-  const SPEED = TILE * 12.0; // was 9.5 — slightly faster wolves
+  const SPEED = TILE * 10.5; // was 9.5 — slightly faster wolves
   const DRIFT = TILE * 2.0;
 
   // iterate backwards so we can remove wolves that expire
