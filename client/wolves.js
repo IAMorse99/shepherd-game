@@ -13,7 +13,7 @@ export function createWolvesManager(env) {
   // Tunables
   const SPEED_PX_S        = TILE * 8;     // wolf run speed
   const RETARGET_EVERY_MS = 400;           // how often to retarget nearest sheep
-  const WOLF_LIFETIME_MS  = 12000;         // max chase time before despawn
+  const WOLF_LIFETIME_MS  = 18000;         // max chase time before despawn
   const PACK_MIN          = 1;
   const PACK_MAX          = 2;
   const SPAWN_MIN_MS      = 8000;          // random interval
