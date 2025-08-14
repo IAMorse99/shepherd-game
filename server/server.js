@@ -110,7 +110,7 @@ function nearestPatchInTiles(foodPatches, xPx, yPx, maxTiles){
   let best = null;
   for (const key of foodPatches) {
     const [xs, ys] = key.split(",");
-    the const tx = +xs, ty = +ys;
+    const tx = +xs, ty = +ys;
     const dx = tx - tx0, dy = ty - ty0;
     const d2 = dx*dx + dy*dy;
     if (d2 <= maxTiles*maxTiles) {
